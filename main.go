@@ -10,6 +10,7 @@ import (
 )
 
 func client() {
+	log.Info("client start")
 	c := socks5.NewClient(5, nil, "", "")
 	if err := c.Dial("127.0.0.1", "8080"); err != nil {
 		log.Error("Dial failed")
@@ -45,9 +46,10 @@ func client() {
 }
 
 func server() {
+	log.Info("server start")
 	// MUST timeout > 500ms
-	s := socks5.NewServer(5, 0, "", "", time.Second*4)
-	if err := s.Listen("127.0.0.1", "8080"); err != nil {
+	s := socks5.NewServer(5, "127.0.0.1", "", time.Second*4)
+	if err := s.Listen("", "8080"); err != nil {
 		log.Error(err)
 	}
 }
@@ -55,7 +57,7 @@ func server() {
 func main() {
 	go server()
 	for {
-		time.Sleep(time.Second * 3)
+		time.Sleep(time.Second * 2)
 		client()
 	}
 }

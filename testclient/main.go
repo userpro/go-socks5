@@ -13,7 +13,7 @@ func main() {
 	var conn net.Conn
 	var err error
 
-	if conn, err = net.Dial("tcp", "47.100.181.160:54488"); err != nil {
+	if conn, err = net.Dial("tcp", ":2321"); err != nil {
 		log.Println(err)
 		return
 	}

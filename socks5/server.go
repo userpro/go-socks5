@@ -23,7 +23,7 @@ type Server struct {
 }
 
 // NewServer 创建server
-func NewServer(version, flag int, username, passwd string, deadline time.Duration) *Server {
+func NewServer(version int, username, passwd string, deadline time.Duration) *Server {
 	supportAuthMethod := []byte{AuthNoAuthRequired}
 	if username != "" {
 		supportAuthMethod = append(supportAuthMethod, AuthUsernamePasswd)
