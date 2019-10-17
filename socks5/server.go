@@ -80,7 +80,7 @@ func (s *Server) authConn(frame *Frame, c protocol.Conn) {
 	// +-----+---------------+
 	buff := make([]byte, 2)
 	if _, err := c.ReadFull(buff); err != nil {
-		log.Error("[authConn] ReadFull err: ", err, c.RemoteAddr().String())
+		log.Error("[authConn] Read header err: ", err, c.RemoteAddr().String())
 		return
 	}
 
@@ -100,7 +100,7 @@ func (s *Server) authConn(frame *Frame, c protocol.Conn) {
 		// 读取所有认证方式
 		buff = make([]byte, methodCount)
 		if _, err := c.ReadFull(buff); err != nil {
-			log.Error("[authConn] ReadFull err: ", err, c.RemoteAddr().String())
+			log.Error("[authConn] Read methods err: ", err, c.RemoteAddr().String())
 			return
 		}
 	} else {
@@ -262,6 +262,7 @@ func (s *Server) doConnect(frame *Frame, c protocol.Conn) {
 	if err = serv.Listen(bindIP + ":" + bindPort); err != nil {
 		log.Error("[doConnect] listen err: ", err)
 	}
+	defer serv.Close()
 
 	// 响应客户端command数据包
 	if _, err = c.Write(frame.ServerCommandResponse(s.version, ReplySuccess, byte(0), bindIP, bindPort)); err != nil {
@@ -278,8 +279,8 @@ func (s *Server) doConnect(frame *Frame, c protocol.Conn) {
 		}
 		// log.Info("from: ", src.RemoteAddr().String(), " to: ", dst.RemoteAddr().String())
 
-		go s.proxy(dst, src)
 		// 只接受一个tcp连接
+		s.proxy(dst, src)
 		return
 	}
 
@@ -339,7 +340,7 @@ func (s *Server) getLocalIP() (ip string) {
 }
 
 func (s *Server) getExternalIP() (ip string) {
-	conn, err := net.DialTimeout("udp", "www.baidu.com:80", time.Millisecond*500)
+	conn, err := net.DialTimeout("udp", "www.baidu.com:80", time.Second*1)
 	if err != nil {
 		log.Error("[server.getExternalIP]", err)
 		return
