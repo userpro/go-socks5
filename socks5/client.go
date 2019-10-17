@@ -46,6 +46,9 @@ func NewClient(version int, methods []byte, username, passwd string) *Client {
 func (c *Client) Dial(proxyAddr, proxyPort string) (err error) {
 	frame := &Frame{}
 
+	if proxyAddr == "localhost" {
+		proxyAddr = "127.0.0.1"
+	}
 	if err = c.conn.Dial(proxyAddr, proxyPort); err != nil {
 		return fmt.Errorf("<conn dial %s:%s err: %w>", proxyAddr, proxyPort, err)
 	}
