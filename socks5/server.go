@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -340,13 +342,17 @@ func (s *Server) getLocalIP() (ip string) {
 }
 
 func (s *Server) getExternalIP() (ip string) {
-	conn, err := net.DialTimeout("udp", "www.baidu.com:80", time.Second*1)
+	client := http.Client{
+		Timeout: time.Second * 3,
+	}
+	resp, err := client.Get("http://myexternalip.com/raw")
 	if err != nil {
 		log.Error("[server.getExternalIP]", err)
 		return
 	}
-	defer conn.Close()
-	return strings.Split(conn.LocalAddr().String(), ":")[0]
+	defer resp.Body.Close()
+	content, _ := ioutil.ReadAll(resp.Body)
+	return string(content)
 }
 
 func (s *Server) getInternalIP() (ip string) {

@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"net"
-	"time"
 )
 
 func main() {
@@ -27,7 +26,6 @@ func main() {
 func handle(c net.Conn) {
 	buff := make([]byte, 1024)
 	for {
-		time.Sleep(time.Second * 2) // 等待对面建立映射关系
 		if _, err := c.Read(buff); err != nil {
 			log.Println(err)
 			return
