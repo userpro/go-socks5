@@ -1,12 +1,12 @@
 package socks5
 
 import (
-	"net"
-	"test/testsocks5/socks5/protocol"
+	"socks5/protocol"
 
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -302,6 +302,7 @@ func (s *Server) proxy(s1 net.Conn, s2 protocol.Conn) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
+		defer wg.Done()
 		for {
 			_, err := io.Copy(s1, s2)
 			if err != nil {
@@ -309,10 +310,10 @@ func (s *Server) proxy(s1 net.Conn, s2 protocol.Conn) {
 				break
 			}
 		}
-		wg.Done()
 	}()
 
 	go func() {
+		defer wg.Done()
 		for {
 			_, err := io.Copy(s2, s1)
 			if err != nil {
@@ -320,7 +321,6 @@ func (s *Server) proxy(s1 net.Conn, s2 protocol.Conn) {
 				break
 			}
 		}
-		wg.Done()
 	}()
 
 	wg.Wait()

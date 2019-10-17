@@ -1,7 +1,7 @@
 package socks5
 
 import (
-	"test/testsocks5/socks5/protocol"
+	"socks5/protocol"
 
 	"errors"
 	"fmt"

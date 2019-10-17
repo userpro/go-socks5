@@ -1,7 +1,7 @@
 package main
 
 import (
-	"test/testsocks5/socks5"
+	"socks5"
 
 	"os"
 	"time"
