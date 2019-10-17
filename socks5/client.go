@@ -2,6 +2,7 @@ package socks5
 
 import (
 	"socks5/protocol"
+	"strings"
 
 	"errors"
 	"fmt"
@@ -175,10 +176,11 @@ func (c *Client) Connect(dstAddr, dstPort string, cmd byte) (conn protocol.Conn,
 		return nil, errors.New(ReplyMessage[buff[1]])
 	}
 
-	bindAddr, bindPort, err := ReadAddress(c.conn)
+	_, bindPort, err := ReadAddress(c.conn)
 	if err != nil {
 		return nil, err
 	}
+	bindAddr := strings.Split(c.conn.RemoteAddr().String(), ":")[0]
 
 	log.Info("[client.Connect]", bindAddr, ":", bindPort)
 	conn = protocol.New()

@@ -15,7 +15,6 @@ import (
 // Server socks5 服务端
 type Server struct {
 	version  byte
-	flag     int // 0=>内部代理 1=>外部代理
 	conn     protocol.Conn
 	deadline time.Duration
 
@@ -31,7 +30,6 @@ func NewServer(version, flag int, username, passwd string, deadline time.Duratio
 	}
 	return &Server{
 		version:           byte(version),
-		flag:              flag,
 		username:          username,
 		passwd:            passwd,
 		deadline:          deadline,
@@ -253,12 +251,7 @@ func (s *Server) doConnect(frame *Frame, c protocol.Conn) {
 		return
 	}
 
-	// 本机IP
-	bindIP := "127.0.0.1"
-	if s.flag == 1 {
-		// 默认loopback地址
-		bindIP = "0.0.0.0"
-	}
+	bindIP := "0.0.0.0"
 	bindPort := strings.Split(dst.LocalAddr().String(), ":")[1]
 	// 开启端口转发监听 等待客户端连接
 	serv := protocol.New()
