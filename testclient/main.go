@@ -1,12 +1,15 @@
 package main
 
 import (
+	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
 	"time"
 )
 
 func main() {
+	log.Println(getExternalIP())
 	var conn net.Conn
 	var err error
 
@@ -31,4 +34,18 @@ func main() {
 		log.Println(string(buff))
 		time.Sleep(time.Second)
 	}
+}
+
+func getExternalIP() (ip string) {
+	client := http.Client{
+		Timeout: time.Second * 3,
+	}
+	resp, err := client.Get("http://myexternalip.com/raw")
+	if err != nil {
+		log.Println("[server.getExternalIP]", err)
+		return
+	}
+	defer resp.Body.Close()
+	content, _ := ioutil.ReadAll(resp.Body)
+	return string(content)
 }

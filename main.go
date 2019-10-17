@@ -11,14 +11,14 @@ import (
 
 func client() {
 	c := socks5.NewClient(5, nil, "", "")
-	if err := c.Dial("47.100.181.160", "8080"); err != nil {
+	if err := c.Dial("127.0.0.1", "8080"); err != nil {
 		log.Error("Dial failed")
 		os.Exit(1)
 	}
 	log.Info("socks5 handshake ok")
 	// socks5.CmdConnect	socks5.CmdBind	socks5.CmdUDP
 	// socks5.AddrDomain	socks5.AddrIPv4	socks5.AddrIPv6
-	conn, err := c.Connect("47.100.181.160", "8090", socks5.CmdConnect)
+	conn, err := c.Connect("127.0.0.1", "8090", socks5.CmdConnect)
 	if err != nil {
 		log.Error(err)
 		return
@@ -46,7 +46,7 @@ func client() {
 
 func server() {
 	// MUST timeout > 500ms
-	s := socks5.NewServer(5, "", "", time.Second*4)
+	s := socks5.NewServer(5, 0, "", "", time.Second*4)
 	if err := s.Listen("127.0.0.1", "8080"); err != nil {
 		log.Error(err)
 	}

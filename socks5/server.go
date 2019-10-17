@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +15,7 @@ import (
 // Server socks5 服务端
 type Server struct {
 	version  byte
+	flag     int // 0=>内部代理 1=>外部代理
 	conn     protocol.Conn
 	deadline time.Duration
 
@@ -25,13 +24,14 @@ type Server struct {
 }
 
 // NewServer 创建server
-func NewServer(version int, username, passwd string, deadline time.Duration) *Server {
+func NewServer(version, flag int, username, passwd string, deadline time.Duration) *Server {
 	supportAuthMethod := []byte{AuthNoAuthRequired}
 	if username != "" {
 		supportAuthMethod = append(supportAuthMethod, AuthUsernamePasswd)
 	}
 	return &Server{
 		version:           byte(version),
+		flag:              flag,
 		username:          username,
 		passwd:            passwd,
 		deadline:          deadline,
@@ -253,16 +253,18 @@ func (s *Server) doConnect(frame *Frame, c protocol.Conn) {
 		return
 	}
 
-	// 本机的外网IP
-	bindIP := s.getExternalIP()
-	if bindIP == "" {
-		return
+	// 本机IP
+	bindIP := "127.0.0.1"
+	if s.flag == 1 {
+		// 默认loopback地址
+		bindIP = "0.0.0.0"
 	}
 	bindPort := strings.Split(dst.LocalAddr().String(), ":")[1]
 	// 开启端口转发监听 等待客户端连接
 	serv := protocol.New()
 	if err = serv.Listen(bindIP + ":" + bindPort); err != nil {
 		log.Error("[doConnect] listen err: ", err)
+		return
 	}
 	defer serv.Close()
 
@@ -330,44 +332,5 @@ func (s *Server) proxy(s1 net.Conn, s2 protocol.Conn) {
 
 	wg.Wait()
 
-	return
-}
-
-func (s *Server) getLocalIP() (ip string) {
-	ip = s.getExternalIP()
-	if ip != "" {
-		return
-	}
-	return s.getInternalIP()
-}
-
-func (s *Server) getExternalIP() (ip string) {
-	client := http.Client{
-		Timeout: time.Second * 3,
-	}
-	resp, err := client.Get("http://myexternalip.com/raw")
-	if err != nil {
-		log.Error("[server.getExternalIP]", err)
-		return
-	}
-	defer resp.Body.Close()
-	content, _ := ioutil.ReadAll(resp.Body)
-	return string(content)
-}
-
-func (s *Server) getInternalIP() (ip string) {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		log.Error("[server.getInternalIP", err)
-		return
-	}
-	for _, a := range addrs {
-		if ipnet, ok := a.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				ip = ipnet.IP.String()
-				return
-			}
-		}
-	}
 	return
 }
