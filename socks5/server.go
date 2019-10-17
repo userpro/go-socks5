@@ -279,6 +279,8 @@ func (s *Server) doConnect(frame *Frame, c protocol.Conn) {
 		// log.Info("from: ", src.RemoteAddr().String(), " to: ", dst.RemoteAddr().String())
 
 		go s.proxy(dst, src)
+		// 只接受一个tcp连接
+		return
 	}
 
 	if _, err = c.Write(frame.ServerCommandResponse(s.version, ReplySOCKSServerFailure, byte(0), "", "")); err != nil {
