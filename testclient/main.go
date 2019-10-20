@@ -1,51 +1,37 @@
 package main
 
 import (
-	"io/ioutil"
 	"log"
 	"net"
-	"net/http"
 	"time"
 )
 
 func main() {
-	log.Println(getExternalIP())
 	var conn net.Conn
 	var err error
 
-	if conn, err = net.Dial("tcp", ":2321"); err != nil {
+	if conn, err = net.Dial("tcp", ":8888"); err != nil {
 		log.Println(err)
 		return
 	}
-	log.Println("dial ok")
-	conn.SetDeadline(time.Now().Add(time.Second * 3))
+	defer conn.Close()
+	log.Println("client dial ok")
+
 	buff := make([]byte, 1024)
 	for {
+		conn.SetWriteDeadline(time.Now().Add(time.Second * 3))
 		if _, err := conn.Write([]byte("ping")); err != nil {
 			log.Println(err)
 			return
 		}
-		log.Println("write ok")
 
+		conn.SetReadDeadline(time.Now().Add(time.Second * 3))
 		if _, err := conn.Read(buff); err != nil {
 			log.Println(err)
 			return
 		}
-		log.Println(string(buff))
+		log.Println("client recv ", string(buff))
 		time.Sleep(time.Second)
+		// return
 	}
-}
-
-func getExternalIP() (ip string) {
-	client := http.Client{
-		Timeout: time.Second * 3,
-	}
-	resp, err := client.Get("http://myexternalip.com/raw")
-	if err != nil {
-		log.Println("[server.getExternalIP]", err)
-		return
-	}
-	defer resp.Body.Close()
-	content, _ := ioutil.ReadAll(resp.Body)
-	return string(content)
 }

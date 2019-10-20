@@ -3,9 +3,49 @@ package socks5
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
+	"net"
+	"socks5/protocol"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+var s5Buf sync.Pool
+
+func init() {
+	s5Buf.New = func() interface{} {
+		return make([]byte, 32768)
+	}
+}
+
+func handleClient(p1 io.ReadWriteCloser, p2 net.Conn) {
+	defer p1.Close()
+	defer p2.Close()
+
+	if s1, ok := p1.(protocol.Stream); ok {
+		log.Info("stream open in:", s1.RemoteAddr().String(), " out:", p2.RemoteAddr().String())
+		defer log.Info("stream close in:", s1.RemoteAddr().String(), " out:", p2.RemoteAddr().String())
+	}
+
+	streamCopy := func(dst io.Writer, src io.ReadCloser) chan struct{} {
+		die := make(chan struct{})
+		go func() {
+			buff := s5Buf.Get().([]byte)
+			if _, err := io.CopyBuffer(dst, src, buff); err != nil {
+				log.Error("[streamCopy] err: ", err)
+			}
+			s5Buf.Put(buff)
+			close(die)
+		}()
+		return die
+	}
+
+	select {
+	case <-streamCopy(p1, p2):
+	case <-streamCopy(p2, p1):
+	}
+}
 
 // StrToByteIPv4 字符串转IPv4
 func StrToByteIPv4(ipv4 string) []byte {

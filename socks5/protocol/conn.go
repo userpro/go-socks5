@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"io"
 	"net"
 	"time"
 )
@@ -9,9 +10,10 @@ import (
 type Conn interface {
 	RemoteAddr() net.Addr
 	LocalAddr() net.Addr
-	SetDeadline(t time.Time) error
+	SetReadTimeout(timeout time.Duration)
+	SetWriteTimeout(timeout time.Duration)
 
-	Dial(addr, port string) (err error)
+	Dial(addr string) (err error)
 	Write(data []byte) (nwrite int, err error)
 	Read(buff []byte) (nread int, err error)
 	ReadFull(buff []byte) (nread int, err error)
@@ -19,4 +21,10 @@ type Conn interface {
 
 	Accept() (c Conn, err error)
 	Listen(args ...interface{}) (err error)
+}
+
+// Stream 流
+type Stream interface {
+	io.ReadWriteCloser
+	RemoteAddr() net.Addr
 }

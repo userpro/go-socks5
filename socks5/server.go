@@ -5,55 +5,69 @@ import (
 
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"strings"
-	"sync"
 	"time"
 )
 
 // Server socks5 服务端
 type Server struct {
-	version  byte
-	conn     protocol.Conn
-	deadline time.Duration
+	version                   byte
+	listener                  protocol.Conn
+	readTimeout, writeTimeout time.Duration
 
-	supportAuthMethod []byte // 支持的认证方式
-	username, passwd  string
+	supportAuthMethod  []byte // 支持的认证方式
+	username, password string
 }
 
-// NewServer 创建server
-func NewServer(version int, username, passwd string, deadline time.Duration) *Server {
-	supportAuthMethod := []byte{AuthNoAuthRequired}
-	if username != "" {
-		supportAuthMethod = append(supportAuthMethod, AuthUsernamePasswd)
-	}
+// ServerOpts 相关参数
+type ServerOpts struct {
+	Username, Password        string
+	ReadTimeout, WriteTimeout time.Duration
+}
+
+// NewServer 创建server 默认无timeout
+func NewServer() *Server {
 	return &Server{
-		version:           byte(version),
-		username:          username,
-		passwd:            passwd,
-		deadline:          deadline,
-		supportAuthMethod: supportAuthMethod,
+		version:           5,
+		listener:          protocol.New(),
+		supportAuthMethod: []byte{AuthNoAuthRequired},
 	}
+}
+
+// NewServerWithTimeout 带超时Server 设置为0 清除timeout
+func NewServerWithTimeout(opts *ServerOpts) *Server {
+	serv := NewServer()
+	if opts.Username != "" {
+		serv.supportAuthMethod = append(serv.supportAuthMethod, AuthUsernamePasswd)
+	}
+	serv.username = opts.Username
+	serv.password = opts.Password
+	serv.readTimeout = opts.ReadTimeout
+	serv.writeTimeout = opts.WriteTimeout
+	return serv
 }
 
 // Listen 监听
-func (s *Server) Listen(addr, port string) (err error) {
-	if s.conn == nil {
-		s.conn = protocol.New()
-	}
-
-	if err = s.conn.Listen(addr + ":" + port); err == nil {
+func (s *Server) Listen(addr string) (err error) {
+	if err = s.listener.Listen(addr); err == nil {
 		for {
-			conn, err := s.conn.Accept()
+			conn, err := s.listener.Accept()
 			if err != nil {
 				log.Error("[server.Listen] accept err: ", err)
 				continue
 			}
-			if err = conn.SetDeadline(time.Now().Add(s.deadline)); err != nil {
-				log.Error("[server.Listen] SetDeadline err: ", err, conn.RemoteAddr().String())
-				continue
+
+			// log.Info("[Server] ", conn.RemoteAddr().String())
+
+			if s.readTimeout >= 0 {
+				conn.SetReadTimeout(s.readTimeout)
 			}
+
+			if s.writeTimeout >= 0 {
+				conn.SetWriteTimeout(s.writeTimeout)
+			}
+
 			frame := &Frame{}
 			go s.authConn(frame, conn)
 		}
@@ -61,7 +75,7 @@ func (s *Server) Listen(addr, port string) (err error) {
 	return
 }
 
-func (s *Server) checkVersion(version byte) (err error) {
+func (s *Server) isSameVersion(version byte) (err error) {
 	if version != s.version {
 		return fmt.Errorf("<version incorrect, need socks %d>", s.version)
 	}
@@ -69,8 +83,8 @@ func (s *Server) checkVersion(version byte) (err error) {
 }
 
 // 认证
-func (s *Server) authConn(frame *Frame, c protocol.Conn) {
-	defer c.Close()
+func (s *Server) authConn(frame *Frame, conn protocol.Conn) {
+	var totalBuff [256]byte
 
 	// 客户端支持的认证方法数
 	// +-----+---------------+
@@ -78,14 +92,14 @@ func (s *Server) authConn(frame *Frame, c protocol.Conn) {
 	// +-----+---------------+
 	// |   1 |             1 |
 	// +-----+---------------+
-	buff := make([]byte, 2)
-	if _, err := c.ReadFull(buff); err != nil {
-		log.Error("[authConn] Read header err: ", err, c.RemoteAddr().String())
+	buff := totalBuff[:2]
+	if _, err := conn.ReadFull(buff); err != nil {
+		log.Error("[authConn] Read header err: ", err, "from", conn.RemoteAddr().String())
 		return
 	}
 
-	if err := s.checkVersion(buff[0]); err != nil {
-		log.Error("[authConn] checkVersion err: ", err, c.RemoteAddr().String())
+	if err := s.isSameVersion(buff[0]); err != nil {
+		log.Error("[authConn] isSameVersion err: ", err, conn.RemoteAddr().String())
 		return
 	}
 
@@ -98,9 +112,9 @@ func (s *Server) authConn(frame *Frame, c protocol.Conn) {
 	methodCount := buff[1]
 	if methodCount > 0 {
 		// 读取所有认证方式
-		buff = make([]byte, methodCount)
-		if _, err := c.ReadFull(buff); err != nil {
-			log.Error("[authConn] Read methods err: ", err, c.RemoteAddr().String())
+		buff = totalBuff[:methodCount]
+		if _, err := conn.ReadFull(buff); err != nil {
+			log.Error("[authConn] Read methods err: ", err, conn.RemoteAddr().String())
 			return
 		}
 	} else {
@@ -117,8 +131,8 @@ func (s *Server) authConn(frame *Frame, c protocol.Conn) {
 		}
 	}
 
-	if _, err := c.Write(frame.ServerAuthResponse(s.version, chooseAuthMethod)); err != nil {
-		log.Error("[authConn] ServerAuthResponse write err: ", err, c.RemoteAddr().String())
+	if _, err := conn.Write(frame.ServerAuthResponse(s.version, chooseAuthMethod)); err != nil {
+		log.Error("[authConn] ServerAuthResponse write err: ", err, conn.RemoteAddr().String())
 		return
 	}
 
@@ -127,28 +141,33 @@ func (s *Server) authConn(frame *Frame, c protocol.Conn) {
 		// 没有认证 Do Nothing
 	case AuthUsernamePasswd:
 		// 用户名密码验证
-		err := s.authUsernamePasswd(frame, c)
+		err := s.authUsernamePasswd(totalBuff[:], frame, conn)
 		if err != nil {
-			log.Error("[authConn] authUsernamePasswd err: ", err, c.RemoteAddr().String())
+			log.Error("[authConn] authUsernamePasswd err: ", err, conn.RemoteAddr().String())
 			return
 		}
 
 	default:
-		log.Error("[authConn] unknown auth type ", c.RemoteAddr().String())
+		log.Error("[authConn] unknown auth type ", conn.RemoteAddr().String())
 		return
 	}
 
-	s.handleConn(frame, c)
+	s.handleConn(totalBuff[:], frame, conn)
 	return
 }
 
-func (s *Server) authUsernamePasswd(frame *Frame, c protocol.Conn) (err error) {
-	buff := make([]byte, 2)
-	if _, err = c.ReadFull(buff); err != nil {
+// +---------+-----------------+----------+-----------------+----------+
+// | VERSION | USERNAME_LENGTH | USERNAME | PASSWORD_LENGTH | PASSWORD |
+// +---------+-----------------+----------+-----------------+----------+
+// |       1 |               1 | 1-255    |               1 | 1-255    |
+// +---------+-----------------+----------+-----------------+----------+
+func (s *Server) authUsernamePasswd(totalBuff []byte, frame *Frame, conn protocol.Conn) (err error) {
+	buff := totalBuff[:2]
+	if _, err = conn.ReadFull(buff); err != nil {
 		return
 	}
 
-	if err = s.checkVersion(buff[0]); err != nil {
+	if err = s.isSameVersion(buff[0]); err != nil {
 		return
 	}
 
@@ -159,8 +178,8 @@ func (s *Server) authUsernamePasswd(frame *Frame, c protocol.Conn) (err error) {
 		return errors.New("<uname length is zero>")
 	}
 
-	buff = make([]byte, unameLen)
-	if _, err = c.ReadFull(buff); err != nil {
+	buff = totalBuff[:unameLen]
+	if _, err = conn.ReadFull(buff); err != nil {
 		return
 	}
 	username = make([]byte, unameLen)
@@ -168,62 +187,62 @@ func (s *Server) authUsernamePasswd(frame *Frame, c protocol.Conn) (err error) {
 
 	// 读取passwd
 	buff = make([]byte, 1)
-	if _, err = c.ReadFull(buff); err != nil {
+	if _, err = conn.ReadFull(buff); err != nil {
 		return
 	}
 	passwdLen := buff[0]
 	if passwdLen < 0 {
 		return errors.New("<passwd length is zero>")
 	}
-	buff = make([]byte, passwdLen)
-	if _, err = c.ReadFull(buff); err != nil {
+	buff = totalBuff[:passwdLen]
+	if _, err = conn.ReadFull(buff); err != nil {
 		return
 	}
 	passwd = make([]byte, passwdLen)
 	copy(passwd, buff)
 
 	// ServerUsernamePasswdResponse 第二个参数为status > 0 failed, = 0 success
-	if s.username == string(username) && s.passwd == string(passwd) {
-		if _, err := c.Write(frame.ServerUsernamePasswdResponse(s.version, 0)); err != nil {
+	if s.username == string(username) && s.password == string(passwd) {
+		if _, err := conn.Write(frame.ServerUsernamePasswdResponse(s.version, 0)); err != nil {
 			return fmt.Errorf("<Write error> %w", err)
 		}
 		return nil
 	}
 
-	if _, err = c.Write(frame.ServerUsernamePasswdResponse(s.version, 100)); err != nil {
+	if _, err = conn.Write(frame.ServerUsernamePasswdResponse(s.version, 100)); err != nil {
 		return fmt.Errorf("<Write error> %w", err)
 	}
 	return errors.New("<username/passwd dismatch>")
 }
 
 // 处理command
-func (s *Server) handleConn(frame *Frame, c protocol.Conn) {
+func (s *Server) handleConn(totalBuff []byte, frame *Frame, conn protocol.Conn) {
 	// +-----+---------+-----+
 	// | VER | COMMAND | RSV |
 	// +-----+---------+-----+
 	// |   1 |       1 |   1 |
 	// +-----+---------+-----+
-	buff := make([]byte, 3)
-	if _, err := c.ReadFull(buff); err != nil {
-		log.Error("[handleConn] read err: ", err, c.RemoteAddr().String())
+	buff := totalBuff[:3]
+	if _, err := conn.ReadFull(buff); err != nil {
+		log.Error("[handleConn] read err: ", err, conn.RemoteAddr().String())
 		return
 	}
 
-	if err := s.checkVersion(buff[0]); err != nil {
-		log.Error("[handleConn] checkVersion err: ", err, c.RemoteAddr().String())
+	if err := s.isSameVersion(buff[0]); err != nil {
+		log.Error("[handleConn] isSameVersion err: ", err, conn.RemoteAddr().String())
 		return
 	}
 
 	switch buff[1] {
 	case CmdConnect:
-		s.doConnect(frame, c)
+		s.doConnect(frame, conn)
 	case CmdBind:
 		fallthrough
 	case CmdUDP:
 		fallthrough
 	default:
-		if _, err := c.Write(frame.ServerCommandResponse(s.version, ReplyCommandNotSupport, byte(0), "", "")); err != nil {
-			log.Error("[handleConn] CommandNotSupport ", err, c.RemoteAddr().String())
+		if _, err := conn.Write(frame.ServerCommandResponse(s.version, ReplyCommandNotSupport, byte(0), "", "")); err != nil {
+			log.Error("[handleConn] CommandNotSupport ", err, conn.RemoteAddr().String())
 		}
 	}
 }
@@ -234,57 +253,54 @@ func (s *Server) handleConn(frame *Frame, c protocol.Conn) {
 // +---------+----------+-----+--------------+----------+----------+
 // |       1 |        1 |   1 |            1 | 1-255    |        2 |
 // +---------+----------+-----+--------------+----------+----------+
-func (s *Server) doConnect(frame *Frame, c protocol.Conn) {
-	addr, port, err := ReadAddress(c)
+func (s *Server) doConnect(frame *Frame, conn protocol.Conn) {
+	addr, port, err := ReadAddress(conn)
 	if err != nil {
-		log.Error("[doConnect] ReadAddress ", err, c.RemoteAddr().String())
+		log.Error("[doConnect] ReadAddress ", err, "from", conn.RemoteAddr().String())
 		return
 	}
 
-	// 连接目标服务器
-	var dst net.Conn
-	if dst, err = net.Dial("tcp", addr+":"+port); err != nil {
-		log.Error("[doConnect] Dail err: ", err, c.RemoteAddr().String())
-		if _, err = c.Write(frame.ServerCommandResponse(s.version, ReplyNetworkUnreachable, byte(0), "", "")); err != nil {
-			log.Error("[doConnect] ServerCommandResponse err: ", err, c.RemoteAddr().String())
+	// 测试目标是否可达 同时获取一个可用端口
+	p2, err := net.Dial("tcp", addr+":"+port)
+	if err != nil {
+		log.Error("[doConnect] Dail err: ", err, "from", conn.RemoteAddr().String())
+		if _, err = conn.Write(frame.ServerCommandResponse(s.version, ReplyNetworkUnreachable, byte(0), "", "")); err != nil {
+			log.Error("[doConnect] ServerCommandResponse err: ", err, "from", conn.RemoteAddr().String())
 		}
 		return
 	}
-
 	bindIP := "0.0.0.0"
-	bindPort := strings.Split(dst.LocalAddr().String(), ":")[1]
+	bindPort := strings.Split(p2.LocalAddr().String(), ":")[1]
+
 	// 开启端口转发监听 等待客户端连接
-	serv := protocol.New()
-	if err = serv.Listen(bindIP + ":" + bindPort); err != nil {
+	server := protocol.New()
+	if err = server.Listen(bindIP + ":" + bindPort); err != nil {
 		log.Error("[doConnect] listen err: ", err)
+		if _, err = conn.Write(frame.ServerCommandResponse(s.version, ReplySOCKSServerFailure, byte(0), "", "")); err != nil {
+			log.Error("[doConnect] ServerCommandResponse err: ", err, "from", conn.RemoteAddr().String())
+		}
 		return
 	}
-	defer serv.Close()
+	defer server.Close()
 
 	// 响应客户端command数据包
-	if _, err = c.Write(frame.ServerCommandResponse(s.version, ReplySuccess, byte(0), bindIP, bindPort)); err != nil {
-		log.Error("[doConnect] ServerCommandResponse err: ", err, c.RemoteAddr().String())
+	if _, err = conn.Write(frame.ServerCommandResponse(s.version, ReplySuccess, byte(0), bindIP, bindPort)); err != nil {
+		log.Error("[doConnect] ServerCommandResponse err: ", err, "from", conn.RemoteAddr().String())
 		return
 	}
 
 	// 转发端口流量
 	for {
-		src, err := serv.Accept()
+		p1, err := server.Accept()
 		if err != nil {
 			log.Error("[doConnect] proxy port accept err: ", err)
 			break
 		}
-		// log.Info("from: ", src.RemoteAddr().String(), " to: ", dst.RemoteAddr().String())
 
-		// 只接受一个tcp连接
-		s.proxy(dst, src)
+		handleClient(p1, p2)
 		return
 	}
 
-	if _, err = c.Write(frame.ServerCommandResponse(s.version, ReplySOCKSServerFailure, byte(0), "", "")); err != nil {
-		log.Error("[doConnect] ServerCommandResponse err: ", err, c.RemoteAddr().String())
-		return
-	}
 	return
 }
 
@@ -292,38 +308,5 @@ func (s *Server) doBind(c protocol.Conn) (err error) {
 	return
 }
 func (s *Server) doUDP(c protocol.Conn) (err error) {
-	return
-}
-
-func (s *Server) proxy(s1 net.Conn, s2 protocol.Conn) {
-	defer s1.Close()
-	defer s2.Close()
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		for {
-			_, err := io.Copy(s1, s2)
-			if err != nil {
-				log.Error("[proxy] dst to src err: ", err)
-				break
-			}
-		}
-	}()
-
-	go func() {
-		defer wg.Done()
-		for {
-			_, err := io.Copy(s2, s1)
-			if err != nil {
-				log.Error("[proxy] src to dst err: ", err)
-				break
-			}
-		}
-	}()
-
-	wg.Wait()
-
 	return
 }

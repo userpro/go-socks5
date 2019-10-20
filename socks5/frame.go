@@ -5,6 +5,66 @@ import (
 	"strconv"
 )
 
+// STATUS
+const (
+	StatusSuccess byte = 0x01
+	StatusFailed  byte = 0x02
+)
+
+// METHODS_COUNT METHODS
+const (
+	AuthNoAuthRequired       byte = 0x00
+	AuthGSSAPI               byte = 0x01
+	AuthUsernamePasswd       byte = 0x02
+	AuthIANAAssigned         byte = 0x03 // to 0x7f
+	AuthRSVForPrivateMethods byte = 0x80 // to 0xfe
+	AuthNoAcceptMethods      byte = 0xff
+)
+
+// COMMAND
+const (
+	CmdConnect byte = 0x01
+	CmdBind    byte = 0x02
+	CmdUDP     byte = 0x03
+)
+
+// REPLY
+const (
+	ReplySuccess                     byte = 0x00
+	ReplySOCKSServerFailure          byte = 0x01
+	ReplyConnectionNotAllowByRuleset byte = 0x02
+	ReplyNetworkUnreachable          byte = 0x03
+	ReplyHostUnreachable             byte = 0x04
+	ReplyConnectionRefused           byte = 0x05
+	ReplyTTLExpired                  byte = 0x06
+	ReplyCommandNotSupport           byte = 0x07
+	ReplyAddressTypeNotSupported     byte = 0x08
+	ReplyUnassigned                  byte = 0x09
+)
+
+// ReplyMessage
+var (
+	ReplyMessage = map[byte]string{
+		ReplySuccess:                     "Success",
+		ReplySOCKSServerFailure:          "SOCKSServerFailure",
+		ReplyConnectionNotAllowByRuleset: "ConnectionNotAllowByRuleset",
+		ReplyNetworkUnreachable:          "NetworkUnreachable",
+		ReplyHostUnreachable:             "HostUnreachable",
+		ReplyConnectionRefused:           "ConnectionRefused",
+		ReplyTTLExpired:                  "TTLExpired",
+		ReplyCommandNotSupport:           "CommandNotSupport",
+		ReplyAddressTypeNotSupported:     "AddressTypeNotSupported",
+		ReplyUnassigned:                  "Unassigned",
+	}
+)
+
+// ADDRESS_TYPE
+const (
+	AddrIPv4   byte = 0x01
+	AddrDomain byte = 0x03
+	AddrIPv6   byte = 0x04
+)
+
 // Frame 最终发送的数据包
 type Frame struct {
 	data []byte
@@ -95,23 +155,7 @@ func (f *Frame) wPasswd(passwd string) {
 	f.data = append(f.data, []byte(passwd)...)
 }
 
-// STATUS
-const (
-	StatusSuccess byte = 0x01
-	StatusFailed  byte = 0x02
-)
-
 func (f *Frame) wStatus(status int) { f.data = append(f.data, byte(status)) }
-
-// METHODS_COUNT METHODS
-const (
-	AuthNoAuthRequired       byte = 0x00
-	AuthGSSAPI               byte = 0x01
-	AuthUsernamePasswd       byte = 0x02
-	AuthIANAAssigned         byte = 0x03 // to 0x7f
-	AuthRSVForPrivateMethods byte = 0x80 // to 0xfe
-	AuthNoAcceptMethods      byte = 0xff
-)
 
 func (f *Frame) wMethod(method byte) { f.data = append(f.data, method) }
 
@@ -124,56 +168,12 @@ func (f *Frame) wMethods(methods []byte) {
 	}
 }
 
-// COMMAND
-const (
-	CmdConnect byte = 0x01
-	CmdBind    byte = 0x02
-	CmdUDP     byte = 0x03
-)
-
 func (f *Frame) wCommand(command byte) { f.data = append(f.data, command) }
 
 // RSV
 func (f *Frame) wRSV(rsv byte) { f.data = append(f.data, rsv) }
 
-// REPLY
-const (
-	ReplySuccess                     byte = 0x00
-	ReplySOCKSServerFailure          byte = 0x01
-	ReplyConnectionNotAllowByRuleset byte = 0x02
-	ReplyNetworkUnreachable          byte = 0x03
-	ReplyHostUnreachable             byte = 0x04
-	ReplyConnectionRefused           byte = 0x05
-	ReplyTTLExpired                  byte = 0x06
-	ReplyCommandNotSupport           byte = 0x07
-	ReplyAddressTypeNotSupported     byte = 0x08
-	ReplyUnassigned                  byte = 0x09
-)
-
-// ReplyMessage ...
-var (
-	ReplyMessage = map[byte]string{
-		ReplySuccess:                     "Success",
-		ReplySOCKSServerFailure:          "SOCKSServerFailure",
-		ReplyConnectionNotAllowByRuleset: "ConnectionNotAllowByRuleset",
-		ReplyNetworkUnreachable:          "NetworkUnreachable",
-		ReplyHostUnreachable:             "HostUnreachable",
-		ReplyConnectionRefused:           "ConnectionRefused",
-		ReplyTTLExpired:                  "TTLExpired",
-		ReplyCommandNotSupport:           "CommandNotSupport",
-		ReplyAddressTypeNotSupported:     "AddressTypeNotSupported",
-		ReplyUnassigned:                  "Unassigned",
-	}
-)
-
 func (f *Frame) wReply(reply byte) { f.data = append(f.data, reply) }
-
-// ADDRESS_TYPE
-const (
-	AddrIPv4   byte = 0x01
-	AddrDomain byte = 0x03
-	AddrIPv6   byte = 0x04
-)
 
 // +--------------+----------+----------+
 // | ADDRESS_TYPE | DST.ADDR | DST.PORT |
