@@ -51,14 +51,14 @@ func NewServerWithTimeout(opts *ServerOpts) *Server {
 // Listen 监听
 func (s *Server) Listen(addr string) (err error) {
 	if err = s.listener.Listen(addr); err == nil {
+		defer s.listener.Close()
 		for {
 			conn, err := s.listener.Accept()
 			if err != nil {
 				log.Error("[server.Listen] accept err: ", err)
 				continue
 			}
-
-			// log.Info("[Server] ", conn.RemoteAddr().String())
+			log.Info("[server.Listen] ", conn.RemoteAddr().String(), " -> ", conn.LocalAddr().String())
 
 			if s.readTimeout >= 0 {
 				conn.SetReadTimeout(s.readTimeout)
@@ -68,8 +68,73 @@ func (s *Server) Listen(addr string) (err error) {
 				conn.SetWriteTimeout(s.writeTimeout)
 			}
 
-			frame := &Frame{}
-			go s.authConn(frame, conn)
+			go func() {
+				defer conn.Close()
+
+				frame := &Frame{}
+				var totalBuff [256]byte
+
+				// 客户端支持的认证方法数
+				// +-----+---------------+
+				// | VER | METHOD_COUNTS |
+				// +-----+---------------+
+				// |   1 |             1 |
+				// +-----+---------------+
+				buff := totalBuff[:2]
+				if _, err := conn.ReadFull(buff); err != nil {
+					log.Error("[authConn] Read header err: ", err, "from", conn.RemoteAddr().String())
+					return
+				}
+
+				if err := s.isSameVersion(buff[0]); err != nil {
+					log.Error("[authConn] isSameVersion err: ", err, conn.RemoteAddr().String())
+					return
+				}
+
+				// methods(由之前method_counts决定)
+				methodCount := buff[1]
+				if methodCount > 0 {
+					buff = totalBuff[:methodCount]
+					if _, err := conn.ReadFull(buff); err != nil {
+						log.Error("[authConn] Read methods err: ", err, conn.RemoteAddr().String())
+						return
+					}
+				} else {
+					buff = []byte{AuthNoAuthRequired}
+				}
+
+				var chooseAuthMethod byte
+				for _, v1 := range s.supportAuthMethod {
+					for _, v2 := range buff {
+						if v1 == v2 {
+							chooseAuthMethod = v1
+						}
+					}
+				}
+
+				if _, err := conn.Write(frame.ServerAuthResponse(s.version, chooseAuthMethod)); err != nil {
+					log.Error("[authConn] ServerAuthResponse write err: ", err, conn.RemoteAddr().String())
+					return
+				}
+
+				switch chooseAuthMethod {
+				case AuthNoAuthRequired:
+					// 没有认证 Do Nothing
+				case AuthUsernamePasswd:
+					// 用户名密码验证
+					err := s.authUsernamePasswd(totalBuff[:], frame, conn)
+					if err != nil {
+						log.Error("[authConn] authUsernamePasswd err: ", err, conn.RemoteAddr().String())
+						return
+					}
+
+				default:
+					log.Error("[authConn] unknown auth type ", conn.RemoteAddr().String())
+					return
+				}
+
+				s.handleCommand(totalBuff[:], frame, conn)
+			}()
 		}
 	}
 	return
@@ -79,80 +144,6 @@ func (s *Server) isSameVersion(version byte) (err error) {
 	if version != s.version {
 		return fmt.Errorf("<version incorrect, need socks %d>", s.version)
 	}
-	return
-}
-
-// 认证
-func (s *Server) authConn(frame *Frame, conn protocol.Conn) {
-	var totalBuff [256]byte
-
-	// 客户端支持的认证方法数
-	// +-----+---------------+
-	// | VER | METHOD_COUNTS |
-	// +-----+---------------+
-	// |   1 |             1 |
-	// +-----+---------------+
-	buff := totalBuff[:2]
-	if _, err := conn.ReadFull(buff); err != nil {
-		log.Error("[authConn] Read header err: ", err, "from", conn.RemoteAddr().String())
-		return
-	}
-
-	if err := s.isSameVersion(buff[0]); err != nil {
-		log.Error("[authConn] isSameVersion err: ", err, conn.RemoteAddr().String())
-		return
-	}
-
-	// methods(由之前method_counts决定)
-	// +---------+
-	// | METHODS |
-	// +---------+
-	// | 1-255   |
-	// +---------+
-	methodCount := buff[1]
-	if methodCount > 0 {
-		// 读取所有认证方式
-		buff = totalBuff[:methodCount]
-		if _, err := conn.ReadFull(buff); err != nil {
-			log.Error("[authConn] Read methods err: ", err, conn.RemoteAddr().String())
-			return
-		}
-	} else {
-		// 不认证
-		buff = []byte{AuthNoAuthRequired}
-	}
-
-	var chooseAuthMethod byte
-	for _, v1 := range s.supportAuthMethod {
-		for _, v2 := range buff {
-			if v1 == v2 {
-				chooseAuthMethod = v1
-			}
-		}
-	}
-
-	if _, err := conn.Write(frame.ServerAuthResponse(s.version, chooseAuthMethod)); err != nil {
-		log.Error("[authConn] ServerAuthResponse write err: ", err, conn.RemoteAddr().String())
-		return
-	}
-
-	switch chooseAuthMethod {
-	case AuthNoAuthRequired:
-		// 没有认证 Do Nothing
-	case AuthUsernamePasswd:
-		// 用户名密码验证
-		err := s.authUsernamePasswd(totalBuff[:], frame, conn)
-		if err != nil {
-			log.Error("[authConn] authUsernamePasswd err: ", err, conn.RemoteAddr().String())
-			return
-		}
-
-	default:
-		log.Error("[authConn] unknown auth type ", conn.RemoteAddr().String())
-		return
-	}
-
-	s.handleConn(totalBuff[:], frame, conn)
 	return
 }
 
@@ -216,7 +207,7 @@ func (s *Server) authUsernamePasswd(totalBuff []byte, frame *Frame, conn protoco
 }
 
 // 处理command
-func (s *Server) handleConn(totalBuff []byte, frame *Frame, conn protocol.Conn) {
+func (s *Server) handleCommand(totalBuff []byte, frame *Frame, conn protocol.Conn) {
 	// +-----+---------+-----+
 	// | VER | COMMAND | RSV |
 	// +-----+---------+-----+
@@ -224,12 +215,12 @@ func (s *Server) handleConn(totalBuff []byte, frame *Frame, conn protocol.Conn) 
 	// +-----+---------+-----+
 	buff := totalBuff[:3]
 	if _, err := conn.ReadFull(buff); err != nil {
-		log.Error("[handleConn] read err: ", err, conn.RemoteAddr().String())
+		log.Error("[handleCommand] read err: ", err, conn.RemoteAddr().String())
 		return
 	}
 
 	if err := s.isSameVersion(buff[0]); err != nil {
-		log.Error("[handleConn] isSameVersion err: ", err, conn.RemoteAddr().String())
+		log.Error("[handleCommand] isSameVersion err: ", err, conn.RemoteAddr().String())
 		return
 	}
 
@@ -242,18 +233,17 @@ func (s *Server) handleConn(totalBuff []byte, frame *Frame, conn protocol.Conn) 
 		fallthrough
 	default:
 		if _, err := conn.Write(frame.ServerCommandResponse(s.version, ReplyCommandNotSupport, byte(0), "", "")); err != nil {
-			log.Error("[handleConn] CommandNotSupport ", err, conn.RemoteAddr().String())
+			log.Error("[handleCommand] CommandNotSupport ", err, conn.RemoteAddr().String())
 		}
 	}
 }
 
-// 返回响应
-// +---------+----------+-----+--------------+----------+----------+
-// | VERSION | RESPONSE | RSV | ADDRESS_TYPE | BND.ADDR | BND.PORT |
-// +---------+----------+-----+--------------+----------+----------+
-// |       1 |        1 |   1 |            1 | 1-255    |        2 |
-// +---------+----------+-----+--------------+----------+----------+
 func (s *Server) doConnect(frame *Frame, conn protocol.Conn) {
+	// +--------------+----------+----------+
+	// | ADDRESS_TYPE | BND.ADDR | BND.PORT |
+	// +--------------+----------+----------+
+	// |            1 | 1-255    |        2 |
+	// +--------------+----------+----------+
 	addr, port, err := ReadAddress(conn)
 	if err != nil {
 		log.Error("[doConnect] ReadAddress ", err, "from", conn.RemoteAddr().String())
@@ -269,37 +259,44 @@ func (s *Server) doConnect(frame *Frame, conn protocol.Conn) {
 		}
 		return
 	}
+
 	bindIP := "0.0.0.0"
 	bindPort := strings.Split(p2.LocalAddr().String(), ":")[1]
 
 	// 开启端口转发监听 等待客户端连接
 	server := protocol.New()
-	if err = server.Listen(bindIP + ":" + bindPort); err != nil {
+	if err = server.Listen(":" + bindPort); err != nil {
 		log.Error("[doConnect] listen err: ", err)
 		if _, err = conn.Write(frame.ServerCommandResponse(s.version, ReplySOCKSServerFailure, byte(0), "", "")); err != nil {
 			log.Error("[doConnect] ServerCommandResponse err: ", err, "from", conn.RemoteAddr().String())
 		}
+		p2.Close()
 		return
 	}
-	defer server.Close()
 
 	// 响应客户端command数据包
 	if _, err = conn.Write(frame.ServerCommandResponse(s.version, ReplySuccess, byte(0), bindIP, bindPort)); err != nil {
 		log.Error("[doConnect] ServerCommandResponse err: ", err, "from", conn.RemoteAddr().String())
+		p2.Close()
+		server.Close()
 		return
 	}
 
 	// 转发端口流量
-	for {
-		p1, err := server.Accept()
-		if err != nil {
-			log.Error("[doConnect] proxy port accept err: ", err)
-			break
-		}
+	go func() {
+		defer server.Close()
+		for {
+			p1, err := server.Accept()
+			if err != nil {
+				log.Error("[doConnect] proxy port accept err: ", err)
+				break
+			}
+			// log.Info("link ", p1.RemoteAddr().String(), " <=> ", p2.RemoteAddr().String())
 
-		handleClient(p1, p2)
-		return
-	}
+			handleClient(p1, p2)
+			return
+		}
+	}()
 
 	return
 }

@@ -5,7 +5,6 @@ import (
 
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -64,9 +63,6 @@ func (c *Client) Dial(proxyAddr string) (err error) {
 	frame := &Frame{}
 	var totalBuff [8]byte
 
-	if proxyAddr == "localhost" {
-		proxyAddr = "127.0.0.1"
-	}
 	if err = c.conn.Dial(proxyAddr); err != nil {
 		return fmt.Errorf("<conn dial %s:%s err: %w>", proxyAddr, err)
 	}
@@ -206,65 +202,5 @@ func (c *Client) Connect(dstAddr string, cmd byte) (bindAddr string, err error) 
 	// bindIP 即是socks5服务器的IP
 	bindIP := strings.Split(c.conn.RemoteAddr().String(), ":")[0]
 	bindAddr = bindIP + ":" + bindPort
-	return
-}
-
-// ReadAddress data
-// +--------------+----------+----------+
-// | ADDRESS_TYPE | DST.ADDR | DST.PORT |
-// +--------------+----------+----------+
-// |           1  | 1-255    |        2 |
-// +--------------+----------+----------+
-func ReadAddress(c protocol.Conn) (addr, port string, err error) {
-	var totalBuff [16]byte
-	buff := totalBuff[:1]
-	if _, err = c.ReadFull(buff); err != nil {
-		return
-	}
-
-	addrType := buff[0]
-	switch addrType {
-	case AddrIPv4:
-		buff = totalBuff[:4]
-		if _, err = c.ReadFull(buff); err != nil {
-			err = fmt.Errorf("<invalid ipv4 address> %w", err)
-			return
-		}
-		addr = IPv4ByteToStr(buff)
-	case AddrIPv6:
-		buff = totalBuff[:16]
-		if _, err = c.ReadFull(buff); err != nil {
-			err = fmt.Errorf("<invalid ipv6 address> %w", err)
-			return
-		}
-		addr = IPv6ByteToStr(buff)
-	case AddrDomain:
-		// 域名地址的第1个字节为域名长度, 剩下字节为域名名称字节数组
-		buff = totalBuff[:1]
-		if _, err = c.ReadFull(buff); err != nil {
-			err = fmt.Errorf("<invalid domain address> %w", err)
-			return
-		}
-		domainLen := buff[1]
-		if domainLen > 0 {
-			buff = totalBuff[:domainLen]
-			if _, err = c.ReadFull(buff); err != nil {
-				err = fmt.Errorf("<invalid domain address> %w", err)
-				return
-			}
-		}
-		addr = string(buff)
-	default:
-		err = fmt.Errorf("<unknown address type %d>", addrType)
-		return
-	}
-
-	buff = totalBuff[:2]
-	if _, err = c.ReadFull(buff); err != nil {
-		err = fmt.Errorf("<invalid port> %w", err)
-		return
-	}
-	port = strconv.Itoa(int(ByteToUint16(buff)))
-
 	return
 }

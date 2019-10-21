@@ -3,7 +3,9 @@ package protocol
 import (
 	"crypto/sha1"
 	"io"
+	"log"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/segmentio/ksuid"
@@ -13,8 +15,9 @@ import (
 
 // KcpConn Kcp连接
 type KcpConn struct {
-	sess       *kcpSession
-	server     map[string]*kcpSession
+	sess       *kcpSession            // client
+	servlock   sync.Mutex             // server
+	server     map[string]*kcpSession // server
 	blockCrypt *kcp.BlockCrypt
 	listener   *kcp.Listener
 
@@ -88,30 +91,65 @@ func (s5 *KcpConn) Dial(addr string) (err error) {
 
 	dataConn, err := kcp.DialWithOptions(addr, *s5.blockCrypt, 10, 3)
 	if err != nil {
+		log.Println(dataConn.RemoteAddr().String(), " -> ", dataConn.LocalAddr().String(), "[Dial] DialWithOptions err: ", err)
 		return
 	}
+	dataConn.SetStreamMode(true)
+	dataConn.SetWriteDelay(false)
 
 	if _, err = dataConn.Write(append([]byte{0x00}, sid...)); err != nil {
+		log.Println(dataConn.RemoteAddr().String(), " -> ", dataConn.LocalAddr().String(), "[Dial] dataConn Write err: ", err)
 		return
 	}
 
 	keepConn, err := kcp.DialWithOptions(addr, *s5.blockCrypt, 10, 3)
 	if err != nil {
+		log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "[Dial] DialWithOptions err: ", err)
 		return
 	}
+	keepConn.SetStreamMode(true)
+	keepConn.SetWriteDelay(false)
 	if _, err = keepConn.Write(append([]byte{0x01}, sid...)); err != nil {
+		log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "[Dial] keepConn Write err: ", err)
 		return
 	}
 
+	// ping
 	go func() {
+		defer s5.Close()
 		t := time.NewTicker(s5.pingInterval)
 		defer t.Stop()
+
+		var err error
+		var nwrite int
+		var buff [1]byte
 		for {
 			<-t.C
-			if _, err := keepConn.Write([]byte{0x01}); err != nil {
-				s5.Close()
+
+			for {
+				if err = keepConn.SetWriteDeadline(time.Now().Add(s5.pingInterval)); err != nil {
+					log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "[Dial] keepConn SetWriteDeadline err: ", err)
+					return
+				}
+				if nwrite, err = keepConn.Write([]byte{0x01}); err != nil {
+					log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "[Dial] keepConn Write err: ", err)
+					return
+				}
+				if nwrite > 0 {
+					break
+				}
+			}
+			log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "ping")
+
+			if err = keepConn.SetReadDeadline(time.Now().Add(s5.pingInterval + s5.pongTimeout)); err != nil {
+				log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "[Dial] keepConn SetReadDeadline err: ", err)
 				return
 			}
+			if _, err = io.ReadFull(keepConn, buff[:]); err != nil {
+				log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "[Dial] keepConn ReadFull err: ", err)
+				return
+			}
+
 		}
 	}()
 
@@ -168,27 +206,39 @@ func (s5 *KcpConn) Close() error {
 
 // Accept conn
 func (s5 *KcpConn) Accept() (c Conn, err error) {
+	defer func() {
+		if c == nil {
+			log.Println("[Accept] c == nil")
+			return
+		}
+		k := c.(*KcpConn)
+		log.Println(k.RemoteAddr().String(), " -> ", k.LocalAddr().String(), "[Accept] accept ")
+	}()
+
 	for {
 		var s *kcp.UDPSession
 		s, err = s5.listener.AcceptKCP()
+
 		var rbuff [21]byte
-		var nread, nsum int
-		for {
-			if 21 <= nsum {
-				break
-			}
-			if err = s.SetReadDeadline(time.Now().Add(s5.readTimeout)); err != nil {
-				return
-			}
-			nread, err = s.Read(rbuff[nsum:])
-			if err != nil {
-				s.Close()
-				return
-			}
-			nsum += nread
+		if err = s.SetReadDeadline(time.Now().Add(s5.readTimeout)); err != nil {
+			log.Println(s.RemoteAddr().String(), " -> ", s.LocalAddr().String(), "[Accept.SetReadDeadline] err: ", err)
+			s.Close()
+			return
+		}
+		if _, err = io.ReadFull(s, rbuff[:]); err != nil {
+			log.Println(s.RemoteAddr().String(), " -> ", s.LocalAddr().String(), "[Accept.ReadFull] err: ", err)
+			s.Close()
+			return
 		}
 
-		sid := string(rbuff[1:])
+		kid := ksuid.New()
+		if err = kid.UnmarshalBinary(rbuff[1:]); err != nil {
+			log.Println(s.RemoteAddr().String(), " -> ", s.LocalAddr().String(), "[Accept.UnmarshalBinary] err: ", err)
+			s.Close()
+			return
+		}
+		sid := kid.String()
+
 		sess, ok := s5.server[sid]
 		if !ok {
 			sess = &kcpSession{}
@@ -207,26 +257,47 @@ func (s5 *KcpConn) Accept() (c Conn, err error) {
 		s5.server[sid] = sess
 
 		if sess.dataConn != nil && sess.keepConn != nil {
+			sess.dataConn.SetStreamMode(true)
+			sess.dataConn.SetWriteDelay(false)
+			sess.keepConn.SetStreamMode(true)
+			sess.keepConn.SetWriteDelay(false)
+
+			delete(s5.server, sess.sid)
+
 			c = New()
 			k := c.(*KcpConn)
 			k.sess = sess
-			// pongTimeout
+			// pong
 			go func() {
 				defer c.Close()
+
 				var buff [1]byte
+				var nwrite int
 				for {
+
 					if err = k.sess.keepConn.SetReadDeadline(time.Now().Add(s5.pingInterval + s5.pongTimeout)); err != nil {
+						log.Println(k.sess.keepConn.RemoteAddr().String(), " -> ", k.sess.keepConn.LocalAddr().String(), "[Accept.SetReadDeadline] keepConn err: ", err)
 						return
 					}
-					if _, err := k.sess.keepConn.Read(buff[:]); err != nil {
+					if _, err = io.ReadFull(k.sess.keepConn, buff[:]); err != nil {
+						log.Println(k.sess.keepConn.RemoteAddr().String(), " -> ", k.sess.keepConn.LocalAddr().String(), "[Accept.ReadFull] keepConn err: ", err)
 						return
 					}
-					if err = k.sess.keepConn.SetWriteDeadline(time.Now().Add(s5.pingInterval + s5.pongTimeout)); err != nil {
-						return
+
+					for {
+						if err = k.sess.keepConn.SetWriteDeadline(time.Now().Add(s5.pingInterval + s5.pongTimeout)); err != nil {
+							log.Println(k.sess.keepConn.RemoteAddr().String(), " -> ", k.sess.keepConn.LocalAddr().String(), "[Accept.SetWriteDeadline] keepConn err: ", err)
+							return
+						}
+						if nwrite, err = k.sess.keepConn.Write(buff[:]); err != nil {
+							log.Println(k.sess.keepConn.RemoteAddr().String(), " -> ", k.sess.keepConn.LocalAddr().String(), " [Accept.Write] keepConn err: ", err)
+							return
+						}
+						if nwrite > 0 {
+							break
+						}
 					}
-					if _, err := k.sess.keepConn.Write(buff[:]); err != nil {
-						return
-					}
+					log.Println(k.sess.keepConn.RemoteAddr().String(), " -> ", k.sess.keepConn.LocalAddr().String(), "pong")
 				}
 			}()
 			return

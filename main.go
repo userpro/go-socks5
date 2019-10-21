@@ -14,7 +14,7 @@ func client() {
 		":8888": ":8090",
 	}
 	pc := &socks5.ProxyClient{}
-	pc.Proxy(":8080", proxyRouter, &socks5.ClientOpts{
+	pc.Proxy("0.0.0.0:8080", proxyRouter, &socks5.ClientOpts{
 		Username:     "hi",
 		Password:     "zerpro",
 		ReadTimeout:  time.Second * 5,

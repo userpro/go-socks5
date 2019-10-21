@@ -21,23 +21,27 @@ func main() {
 		log.Println("get connect ", c.RemoteAddr().String())
 		go handle(c)
 	}
-
 }
 
 func handle(c net.Conn) {
-	buff := make([]byte, 1024)
+	buff := make([]byte, 128)
+	var totalrecv int
+	var nread int
+	var err error
 	for {
 		c.SetReadDeadline(time.Now().Add(time.Second * 3))
-		if _, err := c.Read(buff); err != nil {
+		if nread, err = c.Read(buff); err != nil {
 			log.Println(err)
-			return
+			break
 		}
-		log.Println("server recv: ", string(buff))
+		totalrecv += nread
+		// log.Println("server recv: ", buff[:nread])
 
 		c.SetWriteDeadline(time.Now().Add(time.Second * 3))
-		if _, err := c.Write([]byte("pong")); err != nil {
+		if _, err = c.Write(buff[:nread]); err != nil {
 			log.Println(err)
-			return
+			break
 		}
 	}
+	log.Println("total recv: ", totalrecv)
 }

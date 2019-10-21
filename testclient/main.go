@@ -4,6 +4,8 @@ import (
 	"log"
 	"net"
 	"time"
+
+	"github.com/segmentio/ksuid"
 )
 
 func main() {
@@ -17,21 +19,29 @@ func main() {
 	defer conn.Close()
 	log.Println("client dial ok")
 
-	buff := make([]byte, 1024)
+	ks := ksuid.New()
+	sid := ks.Bytes()
+	log.Println(ks.String())
+
+	buff := make([]byte, 128)
+	var totalread int
+	var nread int
 	for {
 		conn.SetWriteDeadline(time.Now().Add(time.Second * 3))
-		if _, err := conn.Write([]byte("ping")); err != nil {
+		if _, err = conn.Write(sid); err != nil {
 			log.Println(err)
-			return
+			break
 		}
 
 		conn.SetReadDeadline(time.Now().Add(time.Second * 3))
-		if _, err := conn.Read(buff); err != nil {
+		if nread, err = conn.Read(buff); err != nil {
 			log.Println(err)
-			return
+			break
 		}
-		log.Println("client recv ", string(buff))
-		time.Sleep(time.Second)
+		totalread += nread
+		// log.Println("client recv ", buff[:nread])
+		time.Sleep(time.Millisecond * 100)
 		// return
 	}
+	log.Println("total recv: ", totalread)
 }
