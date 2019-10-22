@@ -3,7 +3,9 @@ package socks5
 import (
 	"socks5/protocol"
 
+	"io"
 	"net"
+	"net/http"
 )
 
 // ProxyClient 客户端代理
@@ -12,15 +14,26 @@ type ProxyClient struct {
 }
 
 // Proxy 创建一个代理客户端
-func (p *ProxyClient) Proxy(proxyServer string, proxyRouter map[string]string, opts *ClientOpts) {
+func (p *ProxyClient) Proxy(webServer, proxyServer string, proxyRouter map[string]string, opts *ClientOpts) {
 	p.proxyServer = proxyServer
 
 	// proxyRouter => {localAddress : dstAddress}
 	for localAddress, dstAddress := range proxyRouter {
 		go p.localServer(localAddress, dstAddress, opts)
 	}
-	for {
+
+	// TODO: HTTP服务 web端动态编辑路由
+	if webServer != "" {
+		p.httpAPI(webServer)
 	}
+}
+
+func (p *ProxyClient) httpAPI(webServer string) {
+	h1 := func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "hello")
+	}
+	http.HandleFunc("/", h1)
+	log.Fatal(http.ListenAndServe(webServer, nil))
 }
 
 func (p *ProxyClient) localServer(localAddress, dstAddress string, opts *ClientOpts) {
@@ -37,7 +50,7 @@ func (p *ProxyClient) localServer(localAddress, dstAddress string, opts *ClientO
 			log.Error("[ProxyClient.localServer] Accept err: ", err)
 			return
 		}
-		log.Info("[ProxyClient.localServer] ", clientConn.RemoteAddr().String(), " -> ", clientConn.LocalAddr().String())
+		// log.Info("[ProxyClient.localServer] ", clientConn.RemoteAddr().String(), " -> ", clientConn.LocalAddr().String())
 
 		go func(p1 net.Conn) {
 			defer p1.Close()
@@ -50,7 +63,7 @@ func (p *ProxyClient) localServer(localAddress, dstAddress string, opts *ClientO
 				log.Error("[ProxyClient.proxyConn] Dial failed ", err)
 				return
 			}
-			log.Info("[ProxyClient.proxyConn] socks5 handshake ok")
+			// log.Info("[ProxyClient.proxyConn] socks5 handshake ok")
 
 			bindAddr, err := s5Client.Connect(dstAddress, CmdConnect)
 			if err != nil {
@@ -59,11 +72,13 @@ func (p *ProxyClient) localServer(localAddress, dstAddress string, opts *ClientO
 			}
 
 			// 连接绑定端口
+			log.Info("[ProxyClient.Listen] bind Addr: ", bindAddr)
 			p2 = protocol.New()
 			if err := p2.Dial(bindAddr); err != nil {
 				log.Errorf("[ProxyClient.Listen] <conn dial %s err: %v >", bindAddr, err)
 				return
 			}
+			// log.Info("[ProxyClient.Listen] dial Addr: ", p2.LocalAddr().String())
 
 			// log.Info("link ", p2.LocalAddr().String(), " <=> ", p1.LocalAddr().String())
 			handleClient(p2, p1)

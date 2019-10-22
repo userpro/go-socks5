@@ -14,7 +14,7 @@ func client() {
 		":8888": ":8090",
 	}
 	pc := &socks5.ProxyClient{}
-	pc.Proxy("0.0.0.0:8080", proxyRouter, &socks5.ClientOpts{
+	pc.Proxy("127.0.0.1:9000", "127.0.0.1:8080", proxyRouter, &socks5.ClientOpts{
 		Username:     "hi",
 		Password:     "zerpro",
 		ReadTimeout:  time.Second * 5,
@@ -24,7 +24,6 @@ func client() {
 
 func server() {
 	log.Info("server start")
-	// MUST timeout > 500ms
 	s := socks5.NewServerWithTimeout(&socks5.ServerOpts{
 		Username:     "hi",
 		Password:     "zerpro",

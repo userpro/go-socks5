@@ -2,8 +2,8 @@ package protocol
 
 import (
 	"crypto/sha1"
+	"fmt"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -37,6 +37,8 @@ func New() Conn {
 
 	return &KcpConn{
 		blockCrypt:   &block,
+		readTimeout:  time.Second * 3,
+		writeTimeout: time.Second * 3,
 		pingInterval: time.Second * 3,
 		pongTimeout:  time.Second * 3,
 	}
@@ -91,26 +93,26 @@ func (s5 *KcpConn) Dial(addr string) (err error) {
 
 	dataConn, err := kcp.DialWithOptions(addr, *s5.blockCrypt, 10, 3)
 	if err != nil {
-		log.Println(dataConn.RemoteAddr().String(), " -> ", dataConn.LocalAddr().String(), "[Dial] DialWithOptions err: ", err)
+		err = fmt.Errorf("<[Dial]%s -> %s %w>", dataConn.RemoteAddr().String(), dataConn.LocalAddr().String(), err)
 		return
 	}
 	dataConn.SetStreamMode(true)
 	dataConn.SetWriteDelay(false)
 
 	if _, err = dataConn.Write(append([]byte{0x00}, sid...)); err != nil {
-		log.Println(dataConn.RemoteAddr().String(), " -> ", dataConn.LocalAddr().String(), "[Dial] dataConn Write err: ", err)
+		err = fmt.Errorf("<[Dial]%s -> %s %w>", dataConn.RemoteAddr().String(), dataConn.LocalAddr().String(), err)
 		return
 	}
 
 	keepConn, err := kcp.DialWithOptions(addr, *s5.blockCrypt, 10, 3)
 	if err != nil {
-		log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "[Dial] DialWithOptions err: ", err)
+		err = fmt.Errorf("<[Dial]%s -> %s %w>", keepConn.RemoteAddr().String(), keepConn.LocalAddr().String(), err)
 		return
 	}
 	keepConn.SetStreamMode(true)
 	keepConn.SetWriteDelay(false)
 	if _, err = keepConn.Write(append([]byte{0x01}, sid...)); err != nil {
-		log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "[Dial] keepConn Write err: ", err)
+		err = fmt.Errorf("<[Dial]%s -> %s %w>", keepConn.RemoteAddr().String(), keepConn.LocalAddr().String(), err)
 		return
 	}
 
@@ -128,25 +130,19 @@ func (s5 *KcpConn) Dial(addr string) (err error) {
 
 			for {
 				if err = keepConn.SetWriteDeadline(time.Now().Add(s5.pingInterval)); err != nil {
-					log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "[Dial] keepConn SetWriteDeadline err: ", err)
 					return
 				}
 				if nwrite, err = keepConn.Write([]byte{0x01}); err != nil {
-					log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "[Dial] keepConn Write err: ", err)
 					return
 				}
 				if nwrite > 0 {
 					break
 				}
 			}
-			log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "ping")
-
 			if err = keepConn.SetReadDeadline(time.Now().Add(s5.pingInterval + s5.pongTimeout)); err != nil {
-				log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "[Dial] keepConn SetReadDeadline err: ", err)
 				return
 			}
 			if _, err = io.ReadFull(keepConn, buff[:]); err != nil {
-				log.Println(keepConn.RemoteAddr().String(), " -> ", keepConn.LocalAddr().String(), "[Dial] keepConn ReadFull err: ", err)
 				return
 			}
 
@@ -206,34 +202,25 @@ func (s5 *KcpConn) Close() error {
 
 // Accept conn
 func (s5 *KcpConn) Accept() (c Conn, err error) {
-	defer func() {
-		if c == nil {
-			log.Println("[Accept] c == nil")
-			return
-		}
-		k := c.(*KcpConn)
-		log.Println(k.RemoteAddr().String(), " -> ", k.LocalAddr().String(), "[Accept] accept ")
-	}()
-
 	for {
 		var s *kcp.UDPSession
 		s, err = s5.listener.AcceptKCP()
 
 		var rbuff [21]byte
 		if err = s.SetReadDeadline(time.Now().Add(s5.readTimeout)); err != nil {
-			log.Println(s.RemoteAddr().String(), " -> ", s.LocalAddr().String(), "[Accept.SetReadDeadline] err: ", err)
+			err = fmt.Errorf("<[Accept] %s -> %s %w>", s.RemoteAddr().String(), s.LocalAddr().String(), err)
 			s.Close()
 			return
 		}
 		if _, err = io.ReadFull(s, rbuff[:]); err != nil {
-			log.Println(s.RemoteAddr().String(), " -> ", s.LocalAddr().String(), "[Accept.ReadFull] err: ", err)
+			err = fmt.Errorf("<[Accept] %s -> %s %w>", s.RemoteAddr().String(), s.LocalAddr().String(), err)
 			s.Close()
 			return
 		}
 
 		kid := ksuid.New()
 		if err = kid.UnmarshalBinary(rbuff[1:]); err != nil {
-			log.Println(s.RemoteAddr().String(), " -> ", s.LocalAddr().String(), "[Accept.UnmarshalBinary] err: ", err)
+			err = fmt.Errorf("<[Accept] %s -> %s %w>", s.RemoteAddr().String(), s.LocalAddr().String(), err)
 			s.Close()
 			return
 		}
@@ -274,30 +261,24 @@ func (s5 *KcpConn) Accept() (c Conn, err error) {
 				var buff [1]byte
 				var nwrite int
 				for {
-
 					if err = k.sess.keepConn.SetReadDeadline(time.Now().Add(s5.pingInterval + s5.pongTimeout)); err != nil {
-						log.Println(k.sess.keepConn.RemoteAddr().String(), " -> ", k.sess.keepConn.LocalAddr().String(), "[Accept.SetReadDeadline] keepConn err: ", err)
 						return
 					}
 					if _, err = io.ReadFull(k.sess.keepConn, buff[:]); err != nil {
-						log.Println(k.sess.keepConn.RemoteAddr().String(), " -> ", k.sess.keepConn.LocalAddr().String(), "[Accept.ReadFull] keepConn err: ", err)
 						return
 					}
 
 					for {
 						if err = k.sess.keepConn.SetWriteDeadline(time.Now().Add(s5.pingInterval + s5.pongTimeout)); err != nil {
-							log.Println(k.sess.keepConn.RemoteAddr().String(), " -> ", k.sess.keepConn.LocalAddr().String(), "[Accept.SetWriteDeadline] keepConn err: ", err)
 							return
 						}
 						if nwrite, err = k.sess.keepConn.Write(buff[:]); err != nil {
-							log.Println(k.sess.keepConn.RemoteAddr().String(), " -> ", k.sess.keepConn.LocalAddr().String(), " [Accept.Write] keepConn err: ", err)
 							return
 						}
 						if nwrite > 0 {
 							break
 						}
 					}
-					log.Println(k.sess.keepConn.RemoteAddr().String(), " -> ", k.sess.keepConn.LocalAddr().String(), "pong")
 				}
 			}()
 			return

@@ -27,5 +27,4 @@ type Conn interface {
 type Stream interface {
 	io.ReadWriteCloser
 	RemoteAddr() net.Addr
-	LocalAddr() net.Addr
 }

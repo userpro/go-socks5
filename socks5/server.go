@@ -1,12 +1,12 @@
 package socks5
 
 import (
+	"net"
 	"socks5/protocol"
+	"strings"
 
 	"errors"
 	"fmt"
-	"net"
-	"strings"
 	"time"
 )
 
@@ -55,7 +55,7 @@ func (s *Server) Listen(addr string) (err error) {
 		for {
 			conn, err := s.listener.Accept()
 			if err != nil {
-				log.Error("[server.Listen] accept err: ", err)
+				log.Error("[server.Listen] Accept err: ", err)
 				continue
 			}
 			log.Info("[server.Listen] ", conn.RemoteAddr().String(), " -> ", conn.LocalAddr().String())
@@ -68,76 +68,78 @@ func (s *Server) Listen(addr string) (err error) {
 				conn.SetWriteTimeout(s.writeTimeout)
 			}
 
-			go func() {
-				defer conn.Close()
-
-				frame := &Frame{}
-				var totalBuff [256]byte
-
-				// 客户端支持的认证方法数
-				// +-----+---------------+
-				// | VER | METHOD_COUNTS |
-				// +-----+---------------+
-				// |   1 |             1 |
-				// +-----+---------------+
-				buff := totalBuff[:2]
-				if _, err := conn.ReadFull(buff); err != nil {
-					log.Error("[authConn] Read header err: ", err, "from", conn.RemoteAddr().String())
-					return
-				}
-
-				if err := s.isSameVersion(buff[0]); err != nil {
-					log.Error("[authConn] isSameVersion err: ", err, conn.RemoteAddr().String())
-					return
-				}
-
-				// methods(由之前method_counts决定)
-				methodCount := buff[1]
-				if methodCount > 0 {
-					buff = totalBuff[:methodCount]
-					if _, err := conn.ReadFull(buff); err != nil {
-						log.Error("[authConn] Read methods err: ", err, conn.RemoteAddr().String())
-						return
-					}
-				} else {
-					buff = []byte{AuthNoAuthRequired}
-				}
-
-				var chooseAuthMethod byte
-				for _, v1 := range s.supportAuthMethod {
-					for _, v2 := range buff {
-						if v1 == v2 {
-							chooseAuthMethod = v1
-						}
-					}
-				}
-
-				if _, err := conn.Write(frame.ServerAuthResponse(s.version, chooseAuthMethod)); err != nil {
-					log.Error("[authConn] ServerAuthResponse write err: ", err, conn.RemoteAddr().String())
-					return
-				}
-
-				switch chooseAuthMethod {
-				case AuthNoAuthRequired:
-					// 没有认证 Do Nothing
-				case AuthUsernamePasswd:
-					// 用户名密码验证
-					err := s.authUsernamePasswd(totalBuff[:], frame, conn)
-					if err != nil {
-						log.Error("[authConn] authUsernamePasswd err: ", err, conn.RemoteAddr().String())
-						return
-					}
-
-				default:
-					log.Error("[authConn] unknown auth type ", conn.RemoteAddr().String())
-					return
-				}
-
-				s.handleCommand(totalBuff[:], frame, conn)
-			}()
+			go s.handleConn(conn)
 		}
 	}
 	return
+}
+
+func (s *Server) handleConn(conn protocol.Conn) {
+	defer conn.Close() // TODO: BUG ????????
+
+	frame := &Frame{}
+	var totalBuff [256]byte
+
+	// 客户端支持的认证方法数
+	// +-----+---------------+
+	// | VER | METHOD_COUNTS |
+	// +-----+---------------+
+	// |   1 |             1 |
+	// +-----+---------------+
+	buff := totalBuff[:2]
+	if _, err := conn.ReadFull(buff); err != nil {
+		log.Error("[authConn] Read header err: ", err, "from", conn.RemoteAddr().String())
+		return
+	}
+
+	if err := s.isSameVersion(buff[0]); err != nil {
+		log.Error("[authConn] isSameVersion err: ", err, conn.RemoteAddr().String())
+		return
+	}
+
+	// methods(由之前method_counts决定)
+	methodCount := buff[1]
+	if methodCount > 0 {
+		buff = totalBuff[:methodCount]
+		if _, err := conn.ReadFull(buff); err != nil {
+			log.Error("[authConn] Read methods err: ", err, conn.RemoteAddr().String())
+			return
+		}
+	} else {
+		buff = []byte{AuthNoAuthRequired}
+	}
+
+	var chooseAuthMethod byte
+	for _, v1 := range s.supportAuthMethod {
+		for _, v2 := range buff {
+			if v1 == v2 {
+				chooseAuthMethod = v1
+			}
+		}
+	}
+
+	if _, err := conn.Write(frame.ServerAuthResponse(s.version, chooseAuthMethod)); err != nil {
+		log.Error("[authConn] ServerAuthResponse write err: ", err, conn.RemoteAddr().String())
+		return
+	}
+
+	switch chooseAuthMethod {
+	case AuthNoAuthRequired:
+		// 没有认证 Do Nothing
+	case AuthUsernamePasswd:
+		// 用户名密码验证
+		err := s.authUsernamePasswd(totalBuff[:], frame, conn)
+		if err != nil {
+			log.Error("[authConn] authUsernamePasswd err: ", err, conn.RemoteAddr().String())
+			return
+		}
+
+	default:
+		log.Error("[authConn] unknown auth type ", conn.RemoteAddr().String())
+		return
+	}
+
+	s.handleCommand(totalBuff[:], frame, conn)
 }
 
 func (s *Server) isSameVersion(version byte) (err error) {
@@ -265,7 +267,7 @@ func (s *Server) doConnect(frame *Frame, conn protocol.Conn) {
 
 	// 开启端口转发监听 等待客户端连接
 	server := protocol.New()
-	if err = server.Listen(":" + bindPort); err != nil {
+	if err = server.Listen(bindIP + ":" + bindPort); err != nil {
 		log.Error("[doConnect] listen err: ", err)
 		if _, err = conn.Write(frame.ServerCommandResponse(s.version, ReplySOCKSServerFailure, byte(0), "", "")); err != nil {
 			log.Error("[doConnect] ServerCommandResponse err: ", err, "from", conn.RemoteAddr().String())
@@ -291,7 +293,6 @@ func (s *Server) doConnect(frame *Frame, conn protocol.Conn) {
 				log.Error("[doConnect] proxy port accept err: ", err)
 				break
 			}
-			// log.Info("link ", p1.RemoteAddr().String(), " <=> ", p2.RemoteAddr().String())
 
 			handleClient(p1, p2)
 			return

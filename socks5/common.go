@@ -16,7 +16,7 @@ var s5Buf sync.Pool
 
 func init() {
 	s5Buf.New = func() interface{} {
-		return make([]byte, 2048)
+		return make([]byte, 10240)
 	}
 }
 
@@ -26,7 +26,7 @@ func handleClient(p1 io.ReadWriteCloser, p2 net.Conn) {
 
 	if s1, ok := p1.(protocol.Stream); ok {
 		log.Info("stream open in:", s1.RemoteAddr().String(), " out:", p2.LocalAddr().String())
-		defer log.Info("stream open in:", s1.RemoteAddr().String(), " out:", p2.LocalAddr().String())
+		defer log.Info("stream close in:", s1.RemoteAddr().String(), " out:", p2.LocalAddr().String())
 	}
 
 	streamCopy := func(dst io.Writer, src io.ReadCloser) chan struct{} {
