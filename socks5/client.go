@@ -164,7 +164,7 @@ func (c *Client) Connect(dstAddr string, cmd byte) (bindAddr string, err error) 
 	if ip == "localhost" || ip == "" {
 		ip = "127.0.0.1"
 	}
-	log.Info("[Connect] ", ip, ":", port)
+	// log.Info("[Connect] ", ip, ":", port)
 
 	// 客户端发送指令
 	// +-----+---------+-----+--------------+----------+----------+
