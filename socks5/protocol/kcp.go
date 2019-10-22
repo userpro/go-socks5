@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/segmentio/ksuid"
@@ -16,8 +15,7 @@ import (
 // KcpConn Kcp连接
 type KcpConn struct {
 	sess       *kcpSession            // client
-	servlock   sync.Mutex             // server
-	server     map[string]*kcpSession // server
+	synConn    map[string]*kcpSession // server
 	blockCrypt *kcp.BlockCrypt
 	listener   *kcp.Listener
 
@@ -226,7 +224,7 @@ func (s5 *KcpConn) Accept() (c Conn, err error) {
 		}
 		sid := kid.String()
 
-		sess, ok := s5.server[sid]
+		sess, ok := s5.synConn[sid]
 		if !ok {
 			sess = &kcpSession{}
 		}
@@ -241,7 +239,7 @@ func (s5 *KcpConn) Accept() (c Conn, err error) {
 			}
 			sess.keepConn = s
 		}
-		s5.server[sid] = sess
+		s5.synConn[sid] = sess
 
 		if sess.dataConn != nil && sess.keepConn != nil {
 			sess.dataConn.SetStreamMode(true)
@@ -249,7 +247,7 @@ func (s5 *KcpConn) Accept() (c Conn, err error) {
 			sess.keepConn.SetStreamMode(true)
 			sess.keepConn.SetWriteDelay(false)
 
-			delete(s5.server, sess.sid)
+			delete(s5.synConn, sess.sid)
 
 			c = New()
 			k := c.(*KcpConn)
@@ -291,6 +289,6 @@ func (s5 *KcpConn) Listen(args ...interface{}) (err error) {
 	addr := args[0].(string)
 	sess, err := kcp.ListenWithOptions(addr, *s5.blockCrypt, 10, 3)
 	s5.listener = sess
-	s5.server = make(map[string]*kcpSession)
+	s5.synConn = make(map[string]*kcpSession)
 	return err
 }

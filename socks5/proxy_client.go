@@ -57,7 +57,6 @@ func (p *ProxyClient) localServer(localAddress, dstAddress string, opts *ClientO
 			var p2 protocol.Conn
 			// socks5 认证
 			s5Client := NewClientWithOpts(opts)
-			defer s5Client.Close()
 
 			if err := s5Client.Dial(p.proxyServer); err != nil {
 				log.Error("[ProxyClient.proxyConn] Dial failed ", err)
@@ -70,6 +69,7 @@ func (p *ProxyClient) localServer(localAddress, dstAddress string, opts *ClientO
 				log.Error("[ProxyClient.proxyConn] Command err: ", err)
 				return
 			}
+			s5Client.Close()
 
 			// 连接绑定端口
 			log.Info("[ProxyClient.Listen] bind Addr: ", bindAddr)
