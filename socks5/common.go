@@ -1,112 +1,11 @@
 package socks5
 
 import (
-	"socks5/protocol"
-
 	"encoding/binary"
 	"fmt"
-	"io"
-	"net"
 	"strconv"
 	"strings"
-	"sync"
 )
-
-var s5Buf sync.Pool
-
-func init() {
-	s5Buf.New = func() interface{} {
-		return make([]byte, 10240)
-	}
-}
-
-func handleClient(p1 io.ReadWriteCloser, p2 net.Conn) {
-	defer p1.Close()
-	defer p2.Close()
-
-	if s1, ok := p1.(protocol.Stream); ok {
-		log.Info("stream open in:", s1.RemoteAddr().String(), " out:", p2.LocalAddr().String())
-		defer log.Info("stream close in:", s1.RemoteAddr().String(), " out:", p2.LocalAddr().String())
-	}
-
-	streamCopy := func(dst io.Writer, src io.ReadCloser) chan struct{} {
-		die := make(chan struct{})
-		go func() {
-			buff := s5Buf.Get().([]byte)
-			if _, err := io.CopyBuffer(dst, src, buff); err != nil {
-				log.Error("[streamCopy] err: ", err)
-			}
-			s5Buf.Put(buff)
-			close(die)
-		}()
-		return die
-	}
-
-	select {
-	case <-streamCopy(p1, p2):
-	case <-streamCopy(p2, p1):
-	}
-}
-
-// ReadAddress data
-// +--------------+----------+----------+
-// | ADDRESS_TYPE | DST.ADDR | DST.PORT |
-// +--------------+----------+----------+
-// |           1  | 1-255    |        2 |
-// +--------------+----------+----------+
-func ReadAddress(c protocol.Conn) (addr, port string, err error) {
-	var totalBuff [16]byte
-	buff := totalBuff[:1]
-	if _, err = c.ReadFull(buff); err != nil {
-		return
-	}
-
-	addrType := buff[0]
-	switch addrType {
-	case AddrIPv4:
-		buff = totalBuff[:4]
-		if _, err = c.ReadFull(buff); err != nil {
-			err = fmt.Errorf("<invalid ipv4 address> %w", err)
-			return
-		}
-		addr = IPv4ByteToStr(buff)
-	case AddrIPv6:
-		buff = totalBuff[:16]
-		if _, err = c.ReadFull(buff); err != nil {
-			err = fmt.Errorf("<invalid ipv6 address> %w", err)
-			return
-		}
-		addr = IPv6ByteToStr(buff)
-	case AddrDomain:
-		// 域名地址的第1个字节为域名长度, 剩下字节为域名名称字节数组
-		buff = totalBuff[:1]
-		if _, err = c.ReadFull(buff); err != nil {
-			err = fmt.Errorf("<invalid domain address> %w", err)
-			return
-		}
-		domainLen := buff[1]
-		if domainLen > 0 {
-			buff = totalBuff[:domainLen]
-			if _, err = c.ReadFull(buff); err != nil {
-				err = fmt.Errorf("<invalid domain address> %w", err)
-				return
-			}
-		}
-		addr = string(buff)
-	default:
-		err = fmt.Errorf("<unknown address type %d>", addrType)
-		return
-	}
-
-	buff = totalBuff[:2]
-	if _, err = c.ReadFull(buff); err != nil {
-		err = fmt.Errorf("<invalid port> %w", err)
-		return
-	}
-	port = strconv.Itoa(int(ByteToUint16(buff)))
-
-	return
-}
 
 // StrToByteIPv4 字符串转IPv4
 func StrToByteIPv4(ipv4 string) []byte {

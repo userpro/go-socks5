@@ -3,6 +3,8 @@ package main
 import (
 	"socks5"
 
+	"net/http"
+	_ "net/http/pprof"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -16,7 +18,7 @@ func client() {
 	proxyRouter := map[string]string{
 		":8888": ":8090",
 	}
-	pc := &socks5.ProxyClient{
+	pc := &ProxyClient{
 		HTTPServer:  ":9000",
 		ProxyServer: "127.0.0.1:8080",
 		ProxyRouter: proxyRouter,
@@ -32,7 +34,7 @@ func client() {
 
 func server() {
 	log.Info("server start")
-	s := socks5.NewServerWithTimeout(&socks5.ServerOpts{
+	s := socks5.NewServerWithOpts(&socks5.ServerOpts{
 		Username:     "hi",
 		Password:     "zerpro",
 		ReadTimeout:  time.Second * 5,
@@ -46,5 +48,6 @@ func server() {
 func main() {
 	go server()
 	time.Sleep(time.Second * 2)
-	client()
+	go client()
+	log.Fatal(http.ListenAndServe(":9999", nil))
 }

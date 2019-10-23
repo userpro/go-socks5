@@ -6,19 +6,32 @@ import (
 	"time"
 )
 
-// Conn 连接接口
+// Conn 通用Conn
 type Conn interface {
-	RemoteAddr() net.Addr
-	LocalAddr() net.Addr
+	CommonConn
+	Dial(addr string) (err error)
+	Accept() (c Conn, err error)
+	Listen(args ...interface{}) (err error)
+}
+
+// CommonConn 连接接口
+type CommonConn interface {
 	SetReadTimeout(timeout time.Duration)
 	SetWriteTimeout(timeout time.Duration)
+	RemoteAddr() net.Addr
+	LocalAddr() net.Addr
+	io.ReadWriteCloser
+}
 
+// ClientConn 客户端接口
+type ClientConn interface {
+	CommonConn
 	Dial(addr string) (err error)
-	Write(data []byte) (nwrite int, err error)
-	Read(buff []byte) (nread int, err error)
-	ReadFull(buff []byte) (nread int, err error)
-	Close() error
+}
 
+// ServerConn 服务端接口
+type ServerConn interface {
+	CommonConn
 	Accept() (c Conn, err error)
 	Listen(args ...interface{}) (err error)
 }

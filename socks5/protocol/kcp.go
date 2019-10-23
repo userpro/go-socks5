@@ -91,26 +91,26 @@ func (s5 *KcpConn) Dial(addr string) (err error) {
 
 	dataConn, err := kcp.DialWithOptions(addr, *s5.blockCrypt, 10, 3)
 	if err != nil {
-		err = fmt.Errorf("<[Dial]%s -> %s %w>", dataConn.RemoteAddr().String(), dataConn.LocalAddr().String(), err)
+		err = fmt.Errorf("<[Dial] %s %w>", addr, err)
 		return
 	}
 	dataConn.SetStreamMode(true)
 	dataConn.SetWriteDelay(false)
 
 	if _, err = dataConn.Write(append([]byte{0x00}, sid...)); err != nil {
-		err = fmt.Errorf("<[Dial]%s -> %s %w>", dataConn.RemoteAddr().String(), dataConn.LocalAddr().String(), err)
+		err = fmt.Errorf("<[Dial] %s -> %s %w>", dataConn.RemoteAddr().String(), dataConn.LocalAddr().String(), err)
 		return
 	}
 
 	keepConn, err := kcp.DialWithOptions(addr, *s5.blockCrypt, 10, 3)
 	if err != nil {
-		err = fmt.Errorf("<[Dial]%s -> %s %w>", keepConn.RemoteAddr().String(), keepConn.LocalAddr().String(), err)
+		err = fmt.Errorf("<[Dial] %s -> %s %w>", keepConn.RemoteAddr().String(), keepConn.LocalAddr().String(), err)
 		return
 	}
 	keepConn.SetStreamMode(true)
 	keepConn.SetWriteDelay(false)
 	if _, err = keepConn.Write(append([]byte{0x01}, sid...)); err != nil {
-		err = fmt.Errorf("<[Dial]%s -> %s %w>", keepConn.RemoteAddr().String(), keepConn.LocalAddr().String(), err)
+		err = fmt.Errorf("<[Dial] %s -> %s %w>", keepConn.RemoteAddr().String(), keepConn.LocalAddr().String(), err)
 		return
 	}
 
@@ -179,14 +179,6 @@ func (s5 *KcpConn) Read(buff []byte) (nread int, err error) {
 		return
 	}
 	return s5.sess.dataConn.Read(buff)
-}
-
-// ReadFull data
-func (s5 *KcpConn) ReadFull(buff []byte) (nread int, err error) {
-	if err = s5.internalSetReadTimeout(); err != nil {
-		return
-	}
-	return io.ReadFull(s5.sess.dataConn, buff)
 }
 
 // Close conn

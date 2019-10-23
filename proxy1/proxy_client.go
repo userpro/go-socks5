@@ -1,19 +1,26 @@
-package socks5
+package main
 
 import (
+	"socks5"
 	"socks5/protocol"
 
 	"io"
 	"net"
 	"net/http"
+
+	log "github.com/sirupsen/logrus"
 )
+
+/*
+	client -> proxy -> target
+*/
 
 // ProxyClient 客户端代理
 type ProxyClient struct {
 	HTTPServer  string
 	ProxyServer string
 	ProxyRouter map[string]string
-	Opts        *ClientOpts
+	Opts        *socks5.ClientOpts
 }
 
 // Proxy 创建一个代理客户端
@@ -37,7 +44,7 @@ func (p *ProxyClient) httpAPI() {
 	h1 := func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "hello")
 	}
-	http.HandleFunc("/", h1)
+	http.HandleFunc("/hi", h1)
 	log.Fatal(http.ListenAndServe(p.HTTPServer, nil))
 }
 
@@ -61,13 +68,13 @@ func (p *ProxyClient) localServer(localAddress, dstAddress string) {
 			defer p1.Close()
 			var p2 protocol.Conn
 			// socks5 认证
-			s5Client := NewClientWithOpts(p.Opts)
+			s5Client := socks5.NewClientWithOpts(p.Opts)
 			if err := s5Client.Dial(p.ProxyServer); err != nil {
 				log.Error("[ProxyClient.proxyConn] Dial failed err: ", err)
 				return
 			}
 
-			bindAddr, err := s5Client.Connect(dstAddress, CmdConnect)
+			bindAddr, err := s5Client.Connect(dstAddress)
 			if err != nil {
 				log.Error("[ProxyClient.proxyConn] Command err: ", err)
 				return
@@ -82,7 +89,7 @@ func (p *ProxyClient) localServer(localAddress, dstAddress string) {
 				return
 			}
 
-			handleClient(p2, p1)
+			socks5.ProxyStream(p2, p1)
 		}(clientConn)
 	}
 }

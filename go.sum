@@ -26,6 +26,9 @@ github.com/xtaci/kcp-go v5.4.11+incompatible h1:tJbtarpmOoOD74cZ41uvvF5Hyt1nvctH
 github.com/xtaci/kcp-go v5.4.11+incompatible/go.mod h1:bN6vIwHQbfHaHtFpEssmWsN45a+AZwO7eyRCmEIbtvE=
 github.com/xtaci/lossyconn v0.0.0-20190602105132-8df528c0c9ae h1:J0GxkO96kL4WF+AIT3M4mfUVinOCPgf2uUWYFUzN0sM=
 github.com/xtaci/lossyconn v0.0.0-20190602105132-8df528c0c9ae/go.mod h1:gXtu8J62kEgmN++bm9BVICuT/e8yiLI2KFobd/TRFsE=
+github.com/xtaci/smux v2.0.1+incompatible h1:4NrCD5VzuFktMCxK08IShR0C5vKyNICJRShUzvk0U34=
+github.com/xtaci/smux/v2 v2.0.12 h1:mdhM0zdgBtGSnfnx60rWdmXMNzN4uY1svygyw/i+RdA=
+github.com/xtaci/smux/v2 v2.0.12/go.mod h1:Iqy5a3Gax2p7WCKHOHkSNo/COthNFXd3/vqrcKNtzqI=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
 golang.org/x/crypto v0.0.0-20191002192127-34f69633bfdc h1:c0o/qxkaO2LF5t6fQrT4b5hzyggAkLLlCUjqfRxd8Q4=
 golang.org/x/crypto v0.0.0-20191002192127-34f69633bfdc/go.mod h1:yigFU9vqHzYiE8UmvKecakEJjdnWj3jj499lnFckfCI=
