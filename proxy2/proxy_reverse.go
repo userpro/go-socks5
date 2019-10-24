@@ -11,93 +11,79 @@ import (
 	smuxv2 "github.com/xtaci/smux/v2"
 )
 
+// 1. [内网]client -> proxy -> [公网]server
+// 2. [公网]server -> proxy -> [内网]client
+
 const (
 	localAddr  = "127.0.0.1:8888"
 	proxyAddr  = "127.0.0.1:8080"
 	remoteAddr = "127.0.0.1:8090"
 )
 
-func client() {
-	log.Info("client start")
-	conn := protocol.New()
-	if err := conn.Dial(proxyAddr); err != nil {
-		log.Error("[client] Dial ", err)
-		return
+var (
+	s5 = socks5.S5Protocol{
+		Version:           5,
+		Username:          "hi",
+		Password:          "zerpro",
+		AuthMethodSupport: []byte{socks5.AuthNoAuthRequired},
+		DirectMode:        true,
 	}
-	defer conn.Close()
+)
 
-	muxServer(conn)
+func main() {
+	go server()
+	time.Sleep(time.Second)
+	client()
 }
 
-func server() {
-	log.Info("server start")
-	lis := protocol.New()
-	if err := lis.Listen(proxyAddr); err != nil {
-		log.Error("[server] Listen ", err)
-		return
-	}
-	defer lis.Close()
-
-	conn, err := lis.Accept()
-	if err != nil {
-		log.Error("[server] Accept ", err)
-		return
-	}
-
-	muxClient(conn)
-}
-
-func muxClient(conn protocol.Conn) {
+func muxClient(conn io.ReadWriteCloser) {
 	log.Info("muxClient start")
-	lis, err := net.Listen("tcp", remoteAddr)
-	if err != nil {
-		log.Error("[muxClient] Listen ", err)
-		return
-	}
-
-	for {
-		local, err := lis.Accept()
-		if err != nil {
-			log.Error("[muxClient] Accept ", err)
-			return
-		}
-		handleClientConn(conn, local)
-	}
-}
-
-// 代理客户端数据
-func handleClientConn(conn protocol.Conn, local net.Conn) {
-	defer local.Close()
 	session, err := smuxv2.Client(conn, nil)
 	if err != nil {
-		log.Error("[handleClientConn] Client ", err)
+		log.Error("[muxClient] Client err: ", err)
 		return
 	}
 	defer session.Close()
 
-	stream, err := session.OpenStream()
-	if err != nil {
-		log.Error("[handleClientConn] OpenStream ", err)
-		return
-	}
-	defer stream.Close()
+	proxyConn := func(dst io.ReadWriteCloser) {
+		stream, err := session.OpenStream()
+		if err != nil {
+			log.Error("[muxClient] OpenStream err: ", err)
+			return
+		}
 
-	s5 := socks5.NewS5Protocol()
-	if err := s5.Dial(stream); err != nil {
-		log.Error("[handleClientConn] Dial ", err)
-		return
-	}
-	log.Info("socks5 handshake ok.")
+		defer stream.Close()
+		if err := s5.Dial(stream); err != nil {
+			log.Error("[muxClient] Dial err: ", err)
+			return
+		}
 
-	if _, err := s5.Connect(stream, proxyAddr, remoteAddr); err != nil {
-		log.Error("[handleClientConn] Connect ", err)
-		return
+		if _, err := s5.Connect(stream, proxyAddr, remoteAddr); err != nil {
+			log.Error("[muxClient] Connect err: ", err)
+			return
+		}
+
+		// 发送真实流量
+		socks5.ProxyStream(dst, stream)
 	}
 
-	socks5.ProxyStream(stream, local)
+	// 在公网机器上开启本地端口转发
+	if serv, err := net.Listen("tcp", localAddr); err == nil {
+		defer serv.Close()
+		for {
+			servConn, err := serv.Accept()
+			if err != nil {
+				log.Error("[muxClient] Inner accept err: ", err)
+				return
+			}
+			go proxyConn(servConn)
+		}
+	} else {
+		log.Fatal("[muxClient] tcp server start err: ", err)
+	}
 }
 
-func muxServer(conn protocol.Conn) {
+func muxServer(conn io.ReadWriteCloser) {
 	log.Info("muxServer start")
 	smuxConfig := smuxv2.DefaultConfig()
 	muxer, err := smuxv2.Server(conn, smuxConfig)
@@ -108,26 +94,47 @@ func muxServer(conn protocol.Conn) {
 	defer muxer.Close()
 
 	for {
-		stream, err := muxer.Accept() // TODO Timeout
+		stream, err := muxer.AcceptStream()
 		if err != nil {
 			log.Error("[muxServer] Accept ", err)
 			return
 		}
 
-		go handleServConn(stream)
+		go func() {
+			defer log.Info("muxServer quit")
+			defer stream.Close()
+
+			s5.Server(stream)
+		}()
 	}
 }
 
-// 代理服务端数据
-func handleServConn(conn io.ReadWriteCloser) {
-	defer conn.Close()
-	s5 := socks5.NewS5Protocol()
-	s5.SetDirectMode(true)
-	s5.Server(conn)
+func server() {
+	lis := protocol.New()
+	if err := lis.Listen(proxyAddr); err == nil {
+		defer lis.Close()
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Error("[server] Outside accept err: ", err)
+			return
+		}
+
+		conn.SetReadTimeout(0)
+		conn.SetWriteTimeout(0)
+		time.Sleep(time.Second)
+		muxClient(conn)
+	}
 }
 
-func main() {
-	go server()
-	time.Sleep(time.Second * 2)
-	client()
+func client() {
+	conn := protocol.New()
+	err := conn.Dial(proxyAddr)
+	if err != nil {
+		log.Error("[client] Dial err: ", err)
+		return
+	}
+	defer conn.Close()
+	conn.SetReadTimeout(0)
+	conn.SetWriteTimeout(0)
+	muxServer(conn)
 }
