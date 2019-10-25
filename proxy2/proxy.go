@@ -162,6 +162,7 @@ func muxClient(conn io.ReadWriteCloser, die <-chan struct{}) {
 
 			if serv, err := net.Listen("tcp", localAddr); err == nil {
 				defer serv.Close()
+				log.Info("[muxClient] listen at ", localAddr)
 				go func() {
 					<-die
 					serv.Close()
