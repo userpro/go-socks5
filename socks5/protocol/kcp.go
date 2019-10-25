@@ -192,17 +192,34 @@ func (s5 *KcpConn) configBaseConn(sess *kcp.UDPSession) {
 }
 
 // 设置连接windowSize buffer Mtu
-func (s5 *KcpConn) configSizeConn(sess *kcp.UDPSession) {
-	sess.SetWindowSize(s5.config.SndWnd, s5.config.RcvWnd)
-	sess.SetMtu(s5.config.MTU)
-	if err := sess.SetDSCP(s5.config.DSCP); err != nil {
-		log.Println("SetDSCP:", err)
-	}
-	if err := sess.SetReadBuffer(s5.config.SockBuf); err != nil {
-		log.Println("SetReadBuffer:", err)
-	}
-	if err := sess.SetWriteBuffer(s5.config.SockBuf); err != nil {
-		log.Println("SetWriteBuffer:", err)
+func (s5 *KcpConn) configSizeConn(conn interface{}) {
+	if sess, ok := conn.(*kcp.UDPSession); ok {
+		sess.SetWindowSize(s5.config.SndWnd, s5.config.RcvWnd)
+		sess.SetMtu(s5.config.MTU)
+		if err := sess.SetDSCP(s5.config.DSCP); err != nil {
+			log.Println("SetDSCP:", err)
+		}
+		if err := sess.SetReadBuffer(s5.config.SockBuf); err != nil {
+			log.Println("SetReadBuffer:", err)
+		}
+		if err := sess.SetWriteBuffer(s5.config.SockBuf); err != nil {
+			log.Println("SetWriteBuffer:", err)
+		}
+	} else {
+		sess, ok := conn.(*kcp.Listener)
+		if !ok {
+			log.Println("unknown conn type")
+			return
+		}
+		if err := sess.SetDSCP(s5.config.DSCP); err != nil {
+			log.Println("SetDSCP:", err)
+		}
+		if err := sess.SetReadBuffer(s5.config.SockBuf); err != nil {
+			log.Println("SetReadBuffer:", err)
+		}
+		if err := sess.SetWriteBuffer(s5.config.SockBuf); err != nil {
+			log.Println("SetWriteBuffer:", err)
+		}
 	}
 }
 
@@ -440,6 +457,9 @@ func (s5 *KcpConn) Accept() (c Conn, err error) {
 func (s5 *KcpConn) Listen(args ...interface{}) (err error) {
 	addr := args[0].(string)
 	lis, err := kcp.ListenWithOptions(addr, *s5.blockCrypt, s5.config.DataShard, s5.config.ParityShard)
+	if err == nil {
+		s5.configSizeConn(lis)
+	}
 	s5.listener = lis
 	s5.synConn = make(map[string]*kcpSession)
 	return err
