@@ -207,9 +207,6 @@ func (s5 *KcpConn) configSizeConn(conn interface{}) {
 		}
 	} else {
 		sess := conn.(*kcp.Listener)
-		if err := sess.SetDSCP(s5.config.DSCP); err != nil {
-			log.Println("SetDSCP:", err)
-		}
 		if err := sess.SetReadBuffer(s5.config.SockBuf); err != nil {
 			log.Println("SetReadBuffer:", err)
 		}
@@ -327,7 +324,7 @@ func (s5 *KcpConn) Dial(addr string) (err error) {
 		dataConn: dataConn,
 		keepConn: keepConn,
 	}
-	return err
+	return
 }
 
 // Send data
