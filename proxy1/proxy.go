@@ -25,7 +25,8 @@ var (
 	// localAddr 代理流量入口地址
 	// targetAddr 代理流量出口地址 由代理服务器来发起连接
 	proxyRouter = map[string]string{
-		":8888": ":8090",
+		":8888":  ":8090",
+		":10101": ":9900",
 	}
 
 	clientOpts = &socks5.ClientOpts{
