@@ -10,8 +10,7 @@ import (
 type Server struct {
 	listener                  protocol.ServerConn
 	readTimeout, writeTimeout time.Duration
-
-	s5 *S5Protocol
+	s5                        *S5Protocol
 }
 
 // ServerOpts 相关参数
@@ -33,8 +32,8 @@ func NewServerWithConn(conn protocol.ServerConn) *Server {
 	return &Server{
 		listener: conn,
 		s5: &S5Protocol{
-			version:           5,
-			authMethodSupport: []byte{AuthNoAuthRequired},
+			Version:           5,
+			AuthMethodSupport: []byte{AuthNoAuthRequired},
 		},
 	}
 }
@@ -52,19 +51,14 @@ func NewServerConnWithOpts(conn protocol.ServerConn, opts *ServerOpts) *Server {
 func (s *Server) setOpts(opts *ServerOpts) *Server {
 	if opts != nil {
 		if opts.Username != "" {
-			s.s5.authMethodSupport = append(s.s5.authMethodSupport, AuthUsernamePasswd)
+			s.s5.AuthMethodSupport = append(s.s5.AuthMethodSupport, AuthUsernamePasswd)
 		}
-		s.s5.username = opts.Username
-		s.s5.password = opts.Password
+		s.s5.Username = opts.Username
+		s.s5.Password = opts.Password
 		s.readTimeout = opts.ReadTimeout
 		s.writeTimeout = opts.WriteTimeout
 	}
 	return s
-}
-
-// SetDirectMode direct
-func (s *Server) SetDirectMode(direct bool) {
-	s.s5.SetDirectMode(direct)
 }
 
 // Listen 监听

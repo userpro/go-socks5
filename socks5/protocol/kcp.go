@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"time"
 
@@ -12,12 +13,29 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
+// KcpConfig KCP配置
+type KcpConfig struct {
+	Key  string
+	Salt string
+	// "aes", aes-"128", aes-"192", "salsa20", "blowfish", "twofish", "cast5", "3des", "tea", "xtea", "xor", "sm4", "none"
+	Crypt                                   string
+	Mode                                    string
+	NoDelay, Interval, Resend, NoCongestion int // 跟随mode
+	SndWnd, RcvWnd                          int
+	MTU                                     int
+	AckNodelay                              bool
+	DSCP                                    int
+	SockBuf                                 int
+	DataShard, ParityShard                  int
+}
+
 // KcpConn Kcp连接
 type KcpConn struct {
 	sess       *kcpSession            // client
 	synConn    map[string]*kcpSession // server
 	blockCrypt *kcp.BlockCrypt
 	listener   *kcp.Listener
+	config     *KcpConfig
 
 	readTimeout, writeTimeout time.Duration
 	pingInterval, pongTimeout time.Duration
@@ -28,17 +46,176 @@ type kcpSession struct {
 	dataConn, keepConn *kcp.UDPSession
 }
 
+func defaultConfig() (config *KcpConfig) {
+	return &KcpConfig{
+		Key:         "creeper",
+		Salt:        "awman",
+		Mode:        "fast3",
+		MTU:         1400,
+		SndWnd:      128,
+		RcvWnd:      1024,
+		DataShard:   10,
+		ParityShard: 3,
+		DSCP:        46,
+		AckNodelay:  false,
+		NoDelay:     1,
+		Interval:    40,
+		Resend:      2,
+		SockBuf:     10240,
+	}
+}
+
+func combineConfig(c1 *KcpConfig, c2 *KcpConfig) (config *KcpConfig) {
+	config = &KcpConfig{}
+	if c1.Key == "" {
+		config.Key = c2.Key
+	}
+	if c1.Salt == "" {
+		config.Salt = c2.Salt
+	}
+	if c1.Crypt == "" {
+		config.Crypt = c2.Crypt
+	}
+	if c1.Mode == "" {
+		config.Mode = c2.Mode
+	}
+	if c1.NoDelay == 0 {
+		config.NoDelay = c2.NoDelay
+	}
+	if c1.Interval == 0 {
+		config.Interval = c2.Interval
+	}
+	if c1.Resend == 0 {
+		config.Resend = c2.Resend
+	}
+	if c1.NoCongestion == 0 {
+		config.NoCongestion = c2.NoCongestion
+	}
+	if c1.SndWnd == 0 {
+		config.SndWnd = c2.SndWnd
+	}
+	if c1.RcvWnd == 0 {
+		config.RcvWnd = c2.RcvWnd
+	}
+	if c1.MTU == 0 {
+		config.MTU = c2.MTU
+	}
+	if c1.DSCP == 0 {
+		config.DSCP = c2.DSCP
+	}
+	if c1.SockBuf == 0 {
+		config.SockBuf = c2.SockBuf
+	}
+	if c1.DataShard == 0 {
+		config.DataShard = c2.DataShard
+	}
+	if c1.ParityShard == 0 {
+		config.ParityShard = c2.ParityShard
+	}
+	return
+}
+
 // New KcpConn对象
-func New() Conn {
-	key := pbkdf2.Key([]byte(KCPPasswd), []byte(KCPSalt), 1024, 32, sha1.New)
-	block, _ := kcp.NewAESBlockCrypt(key)
+func New(args ...interface{}) Conn {
+	var config *KcpConfig
+	// 默认参数
+	if len(args) <= 0 || args[0] == nil {
+		config = defaultConfig()
+	} else {
+		// 非法参数校验
+		var ok bool
+		if config, ok = args[0].(*KcpConfig); !ok {
+			panic("[protocol.New] args invalid!")
+		}
+		// 合并默认项
+		config = combineConfig(config, defaultConfig())
+	}
+
+	pass := pbkdf2.Key([]byte(config.Key), []byte(config.Salt), 4096, 32, sha1.New)
+	var block kcp.BlockCrypt
+	switch config.Crypt {
+	case "sm4":
+		block, _ = kcp.NewSM4BlockCrypt(pass[:16])
+	case "tea":
+		block, _ = kcp.NewTEABlockCrypt(pass[:16])
+	case "xor":
+		block, _ = kcp.NewSimpleXORBlockCrypt(pass)
+	case "none":
+		block, _ = kcp.NewNoneBlockCrypt(pass)
+	case "aes-128":
+		block, _ = kcp.NewAESBlockCrypt(pass[:16])
+	case "aes-192":
+		block, _ = kcp.NewAESBlockCrypt(pass[:24])
+	case "blowfish":
+		block, _ = kcp.NewBlowfishBlockCrypt(pass)
+	case "twofish":
+		block, _ = kcp.NewTwofishBlockCrypt(pass)
+	case "cast5":
+		block, _ = kcp.NewCast5BlockCrypt(pass[:16])
+	case "3des":
+		block, _ = kcp.NewTripleDESBlockCrypt(pass[:24])
+	case "xtea":
+		block, _ = kcp.NewXTEABlockCrypt(pass[:16])
+	case "salsa20":
+		block, _ = kcp.NewSalsa20BlockCrypt(pass)
+	default:
+		config.Crypt = "aes"
+		block, _ = kcp.NewAESBlockCrypt(pass)
+	}
+
+	switch config.Mode {
+	case "normal":
+		config.NoDelay, config.Interval, config.Resend, config.NoCongestion = 0, 40, 2, 1
+	case "fast":
+		config.NoDelay, config.Interval, config.Resend, config.NoCongestion = 0, 30, 2, 1
+	case "fast2":
+		config.NoDelay, config.Interval, config.Resend, config.NoCongestion = 1, 20, 2, 1
+	case "fast3":
+		config.NoDelay, config.Interval, config.Resend, config.NoCongestion = 1, 10, 2, 1
+	}
 
 	return &KcpConn{
 		blockCrypt:   &block,
+		config:       config,
 		readTimeout:  time.Second * 3,
 		writeTimeout: time.Second * 3,
 		pingInterval: time.Second * 3,
 		pongTimeout:  time.Second * 3,
+	}
+}
+
+func (s5 *KcpConn) configBaseConn(sess *kcp.UDPSession) {
+	sess.SetStreamMode(true)
+	sess.SetWriteDelay(false)
+	sess.SetNoDelay(s5.config.NoDelay, s5.config.Interval, s5.config.Resend, s5.config.NoCongestion)
+	sess.SetACKNoDelay(s5.config.AckNodelay)
+}
+
+// 设置连接windowSize buffer Mtu
+func (s5 *KcpConn) configSizeConn(conn interface{}) {
+	if sess, ok := conn.(*kcp.UDPSession); ok {
+		sess.SetWindowSize(s5.config.SndWnd, s5.config.RcvWnd)
+		sess.SetMtu(s5.config.MTU)
+		if err := sess.SetDSCP(s5.config.DSCP); err != nil {
+			log.Println("SetDSCP:", err)
+		}
+		if err := sess.SetReadBuffer(s5.config.SockBuf); err != nil {
+			log.Println("SetReadBuffer:", err)
+		}
+		if err := sess.SetWriteBuffer(s5.config.SockBuf); err != nil {
+			log.Println("SetWriteBuffer:", err)
+		}
+	} else {
+		sess := conn.(*kcp.Listener)
+		if err := sess.SetDSCP(s5.config.DSCP); err != nil {
+			log.Println("SetDSCP:", err)
+		}
+		if err := sess.SetReadBuffer(s5.config.SockBuf); err != nil {
+			log.Println("SetReadBuffer:", err)
+		}
+		if err := sess.SetWriteBuffer(s5.config.SockBuf); err != nil {
+			log.Println("SetWriteBuffer:", err)
+		}
 	}
 }
 
@@ -89,26 +266,26 @@ func (s5 *KcpConn) internalSetReadTimeout() (err error) {
 func (s5 *KcpConn) Dial(addr string) (err error) {
 	sid := ksuid.New().Bytes()
 
-	dataConn, err := kcp.DialWithOptions(addr, *s5.blockCrypt, 10, 3)
+	dataConn, err := kcp.DialWithOptions(addr, *s5.blockCrypt, s5.config.DataShard, s5.config.ParityShard)
 	if err != nil {
 		err = fmt.Errorf("<[Dial] %s %w>", addr, err)
 		return
 	}
-	dataConn.SetStreamMode(true)
-	dataConn.SetWriteDelay(false)
+	s5.configBaseConn(dataConn)
+	s5.configSizeConn(dataConn)
 
 	if _, err = dataConn.Write(append([]byte{0x00}, sid...)); err != nil {
 		err = fmt.Errorf("<[Dial] %s -> %s %w>", dataConn.RemoteAddr().String(), dataConn.LocalAddr().String(), err)
 		return
 	}
 
-	keepConn, err := kcp.DialWithOptions(addr, *s5.blockCrypt, 10, 3)
+	keepConn, err := kcp.DialWithOptions(addr, *s5.blockCrypt, s5.config.DataShard, s5.config.ParityShard)
 	if err != nil {
 		err = fmt.Errorf("<[Dial] %s -> %s %w>", keepConn.RemoteAddr().String(), keepConn.LocalAddr().String(), err)
 		return
 	}
-	keepConn.SetStreamMode(true)
-	keepConn.SetWriteDelay(false)
+	s5.configBaseConn(keepConn)
+
 	if _, err = keepConn.Write(append([]byte{0x01}, sid...)); err != nil {
 		err = fmt.Errorf("<[Dial] %s -> %s %w>", keepConn.RemoteAddr().String(), keepConn.LocalAddr().String(), err)
 		return
@@ -125,7 +302,6 @@ func (s5 *KcpConn) Dial(addr string) (err error) {
 		var buff [1]byte
 		for {
 			<-t.C
-
 			for {
 				if err = keepConn.SetWriteDeadline(time.Now().Add(s5.pingInterval)); err != nil {
 					return
@@ -234,16 +410,13 @@ func (s5 *KcpConn) Accept() (c Conn, err error) {
 		s5.synConn[sid] = sess
 
 		if sess.dataConn != nil && sess.keepConn != nil {
-			sess.dataConn.SetStreamMode(true)
-			sess.dataConn.SetWriteDelay(false)
-			sess.keepConn.SetStreamMode(true)
-			sess.keepConn.SetWriteDelay(false)
-
 			delete(s5.synConn, sess.sid)
-
-			c = New()
+			c = New(s5.config)
 			k := c.(*KcpConn)
 			k.sess = sess
+			k.configBaseConn(k.sess.dataConn)
+			k.sess.keepConn.SetStreamMode(true)
+			k.sess.keepConn.SetWriteDelay(false)
 			// pong
 			go func() {
 				defer c.Close()
@@ -279,8 +452,9 @@ func (s5 *KcpConn) Accept() (c Conn, err error) {
 // Listen port
 func (s5 *KcpConn) Listen(args ...interface{}) (err error) {
 	addr := args[0].(string)
-	sess, err := kcp.ListenWithOptions(addr, *s5.blockCrypt, 10, 3)
-	s5.listener = sess
+	lis, err := kcp.ListenWithOptions(addr, *s5.blockCrypt, s5.config.DataShard, s5.config.ParityShard)
+	s5.configSizeConn(lis)
+	s5.listener = lis
 	s5.synConn = make(map[string]*kcpSession)
 	return err
 }

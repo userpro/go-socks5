@@ -35,8 +35,8 @@ func NewClientWithConn(conn protocol.ClientConn) *Client {
 	return &Client{
 		conn: conn,
 		s5: &S5Protocol{
-			version:           5,
-			authMethodSupport: []byte{AuthNoAuthRequired},
+			Version:           5,
+			AuthMethodSupport: []byte{AuthNoAuthRequired},
 		},
 	}
 }
@@ -54,11 +54,11 @@ func NewClientConnWithOpts(conn protocol.ClientConn, opts *ClientOpts) *Client {
 func (c *Client) setOpts(opts *ClientOpts) *Client {
 	if opts != nil {
 		if opts.Username != "" {
-			c.s5.authMethodSupport = append(c.s5.authMethodSupport, AuthUsernamePasswd)
+			c.s5.AuthMethodSupport = append(c.s5.AuthMethodSupport, AuthUsernamePasswd)
 		}
-		c.s5.authMethodSupport = append(c.s5.authMethodSupport, opts.Methods...)
-		c.s5.username = opts.Username
-		c.s5.password = opts.Password
+		c.s5.AuthMethodSupport = append(c.s5.AuthMethodSupport, opts.Methods...)
+		c.s5.Username = opts.Username
+		c.s5.Password = opts.Password
 		c.readTimeout = opts.ReadTimeout
 		c.writeTimeout = opts.WriteTimeout
 	}
@@ -90,9 +90,4 @@ func (c *Client) Close() error {
 // Connect 通过代理服务器连接目标服务器
 func (c *Client) Connect(dstAddr string) (bindAddr string, err error) {
 	return c.s5.Connect(c.conn, c.proxyServer, dstAddr)
-}
-
-// SetDirectMode 设置
-func (c *Client) SetDirectMode(direct bool) {
-	c.s5.SetDirectMode(direct)
 }

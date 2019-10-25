@@ -12,14 +12,14 @@ import (
 )
 
 /*
-	client -> proxy -> target
+	[内网]client -> proxy -> [公网]target
 */
 
 // ProxyClient 客户端代理
 type ProxyClient struct {
 	HTTPServer  string
 	ProxyServer string
-	ProxyRouter map[string]string
+	ProxyRouter map[string]string // ProxyRouter => {localAddr : targetAddr}
 	Opts        *socks5.ClientOpts
 }
 
@@ -29,9 +29,8 @@ func (p *ProxyClient) Proxy() {
 		return
 	}
 
-	// ProxyRouter => {localAddress : dstAddress}
-	for localAddress, dstAddress := range p.ProxyRouter {
-		go p.localServer(localAddress, dstAddress)
+	for localAddr, targetAddr := range p.ProxyRouter {
+		go p.localServer(localAddr, targetAddr)
 	}
 
 	// TODO: HTTP服务 web端动态编辑路由
@@ -48,8 +47,8 @@ func (p *ProxyClient) httpAPI() {
 	log.Fatal(http.ListenAndServe(p.HTTPServer, nil))
 }
 
-func (p *ProxyClient) localServer(localAddress, dstAddress string) {
-	listen, err := net.Listen("tcp", localAddress)
+func (p *ProxyClient) localServer(localAddr, targetAddr string) {
+	listen, err := net.Listen("tcp", localAddr)
 	if err != nil {
 		log.Error("[ProxyClient.localServer] Listen err: ", err)
 		return
@@ -62,7 +61,6 @@ func (p *ProxyClient) localServer(localAddress, dstAddress string) {
 			log.Error("[ProxyClient.localServer] Accept err: ", err)
 			return
 		}
-		// log.Info("[ProxyClient.localServer] ", clientConn.RemoteAddr().String(), " -> ", clientConn.LocalAddr().String())
 
 		go func(p1 net.Conn) {
 			defer p1.Close()
@@ -74,7 +72,7 @@ func (p *ProxyClient) localServer(localAddress, dstAddress string) {
 				return
 			}
 
-			bindAddr, err := s5Client.Connect(dstAddress)
+			bindAddr, err := s5Client.Connect(targetAddr)
 			if err != nil {
 				log.Error("[ProxyClient.proxyConn] Command err: ", err)
 				return

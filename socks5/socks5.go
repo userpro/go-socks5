@@ -22,24 +22,21 @@ func init() {
 
 // S5Protocol 协议实现
 type S5Protocol struct {
-	version            byte
-	username, password string
-	authMethodSupport  []byte // 双方支持的认证方式
-	authMethodChoose   byte   // 双方最终协商决定
-
-	directMode bool // 自定义模式 connect时不去链接 bind address, 直接复用socks5认证链接.
+	Version            byte
+	Username, Password string
+	AuthMethodSupport  []byte      // 双方支持的认证方式
+	AuthMethodChoose   byte        // 双方最终协商决定
+	DirectMode         bool        // 自定义模式 connect时不去链接 bind address, 直接复用socks5认证链接.
+	ConnConfig         interface{} // 下层链接私有参数
 }
 
 // NewS5Protocol 协议体
 func NewS5Protocol() *S5Protocol {
 	return &S5Protocol{
-		version:           5,
-		authMethodSupport: []byte{AuthNoAuthRequired},
+		Version:           5,
+		AuthMethodSupport: []byte{AuthNoAuthRequired},
 	}
 }
-
-// SetDirectMode 设置是否为直连模式 默认false=off true=on
-func (s *S5Protocol) SetDirectMode(direct bool) { s.directMode = direct }
 
 // Server 服务端流程
 func (s *S5Protocol) Server(conn io.ReadWriteCloser) {
@@ -78,7 +75,7 @@ func (s *S5Protocol) Server(conn io.ReadWriteCloser) {
 	}
 
 	var chooseAuthMethod byte
-	for _, v1 := range s.authMethodSupport {
+	for _, v1 := range s.AuthMethodSupport {
 		for _, v2 := range buff {
 			if v1 == v2 {
 				chooseAuthMethod = v1
@@ -86,7 +83,7 @@ func (s *S5Protocol) Server(conn io.ReadWriteCloser) {
 		}
 	}
 
-	if _, err := conn.Write(frame.ServerAuthResponse(s.version, chooseAuthMethod)); err != nil {
+	if _, err := conn.Write(frame.ServerAuthResponse(s.Version, chooseAuthMethod)); err != nil {
 		log.Error("[authConn] ServerAuthResponse write err: ", err)
 		return
 	}
@@ -111,8 +108,8 @@ func (s *S5Protocol) Server(conn io.ReadWriteCloser) {
 }
 
 func (s *S5Protocol) isSameVersion(version byte) (err error) {
-	if version != s.version {
-		return fmt.Errorf("<version incorrect, need socks %d>", s.version)
+	if version != s.Version {
+		return fmt.Errorf("<version incorrect, need socks %d>", s.Version)
 	}
 	return
 }
@@ -163,14 +160,14 @@ func (s *S5Protocol) servAuthUsernamePasswd(conn io.ReadWriteCloser, totalBuff [
 	copy(passwd, buff)
 
 	// ServerUsernamePasswdResponse 第二个参数为status > 0 failed, = 0 success
-	if s.username == string(username) && s.password == string(passwd) {
-		if _, err := conn.Write(frame.ServerUsernamePasswdResponse(s.version, 0)); err != nil {
+	if s.Username == string(username) && s.Password == string(passwd) {
+		if _, err := conn.Write(frame.ServerUsernamePasswdResponse(s.Version, 0)); err != nil {
 			return fmt.Errorf("<Write error> %w", err)
 		}
 		return nil
 	}
 
-	if _, err = conn.Write(frame.ServerUsernamePasswdResponse(s.version, 100)); err != nil {
+	if _, err = conn.Write(frame.ServerUsernamePasswdResponse(s.Version, 100)); err != nil {
 		return fmt.Errorf("<Write error> %w", err)
 	}
 	return errors.New("<username/passwd dismatch>")
@@ -204,7 +201,7 @@ func (s *S5Protocol) servHandleCommand(conn io.ReadWriteCloser, totalBuff []byte
 		s.servDoUDP(conn, frame)
 		fallthrough
 	default:
-		if _, err := conn.Write(frame.ServerCommandResponse(s.version, ReplyCommandNotSupport, byte(0), "", "")); err != nil {
+		if _, err := conn.Write(frame.ServerCommandResponse(s.Version, ReplyCommandNotSupport, byte(0), "", "")); err != nil {
 			log.Error("[servHandleCommand] CommandNotSupport ", err)
 		}
 	}
@@ -226,14 +223,19 @@ func (s *S5Protocol) servDoConnect(conn io.ReadWriteCloser, frame *Frame) {
 	p2, err := net.Dial("tcp", addr+":"+port)
 	if err != nil {
 		log.Error("[servDoConnect] Dail err: ", err)
-		if _, err = conn.Write(frame.ServerCommandResponse(s.version, ReplyNetworkUnreachable, byte(0), "", "")); err != nil {
+		if _, err = conn.Write(frame.ServerCommandResponse(s.Version, ReplyNetworkUnreachable, byte(0), "", "")); err != nil {
 			log.Error("[servDoConnect] ServerCommandResponse err: ", err)
 		}
 		return
 	}
 
 	// 直连模式
-	if s.directMode {
+	if s.DirectMode {
+		// 响应客户端command数据包
+		if _, err = conn.Write(frame.ServerCommandResponse(s.Version, ReplySuccess, byte(0), "", "")); err != nil {
+			log.Error("[servDoConnect] ServerCommandResponse err: ", err)
+			return
+		}
 		ProxyStream(conn, p2)
 		return
 	}
@@ -242,10 +244,10 @@ func (s *S5Protocol) servDoConnect(conn io.ReadWriteCloser, frame *Frame) {
 	bindPort := strings.Split(p2.LocalAddr().String(), ":")[1]
 
 	// 开启端口转发监听 等待客户端连接
-	server := protocol.New()
+	server := protocol.New(s.ConnConfig)
 	if err = server.Listen(bindIP + ":" + bindPort); err != nil {
 		log.Error("[servDoConnect] listen err: ", err)
-		if _, err = conn.Write(frame.ServerCommandResponse(s.version, ReplySOCKSServerFailure, byte(0), "", "")); err != nil {
+		if _, err = conn.Write(frame.ServerCommandResponse(s.Version, ReplySOCKSServerFailure, byte(0), "", "")); err != nil {
 			log.Error("[servDoConnect] ServerCommandResponse err: ", err)
 		}
 		p2.Close()
@@ -253,7 +255,7 @@ func (s *S5Protocol) servDoConnect(conn io.ReadWriteCloser, frame *Frame) {
 	}
 
 	// 响应客户端command数据包
-	if _, err = conn.Write(frame.ServerCommandResponse(s.version, ReplySuccess, byte(0), bindIP, bindPort)); err != nil {
+	if _, err = conn.Write(frame.ServerCommandResponse(s.Version, ReplySuccess, byte(0), bindIP, bindPort)); err != nil {
 		log.Error("[servDoConnect] ServerCommandResponse err: ", err)
 		p2.Close()
 		server.Close()
@@ -295,7 +297,7 @@ func (s *S5Protocol) Dial(conn io.ReadWriteCloser) (err error) {
 	// +----+----------+----------+
 	// | 1  |    1     |  1~255   |
 	// +----+----------+----------+
-	if _, err = conn.Write(frame.ClientAuthRequest(s.version, s.authMethodSupport)); err != nil {
+	if _, err = conn.Write(frame.ClientAuthRequest(s.Version, s.AuthMethodSupport)); err != nil {
 		return fmt.Errorf("<conn write ClientAuthRequest err: %w>", err)
 	}
 
@@ -315,17 +317,17 @@ func (s *S5Protocol) Dial(conn io.ReadWriteCloser) (err error) {
 	}
 
 	// 选定鉴权方式
-	s.authMethodChoose = buff[1]
+	s.AuthMethodChoose = buff[1]
 	return s.clientAuth(conn, totalBuff[:], frame)
 }
 
 func (s *S5Protocol) clientAuth(conn io.ReadWriteCloser, totalBuff []byte, frame *Frame) (err error) {
 	// 无须验证
-	if s.authMethodChoose == AuthNoAuthRequired {
+	if s.AuthMethodChoose == AuthNoAuthRequired {
 		return nil
 	}
 
-	if s.authMethodChoose != AuthUsernamePasswd {
+	if s.AuthMethodChoose != AuthUsernamePasswd {
 		return errors.New("<unsupport auth type>")
 	}
 
@@ -335,7 +337,7 @@ func (s *S5Protocol) clientAuth(conn io.ReadWriteCloser, totalBuff []byte, frame
 	// +-----+-----------------+----------+-----------------+----------+
 	// |   1 |               1 | 1-255    |               1 | 1-255    |
 	// +-----+-----------------+----------+-----------------+----------+
-	if _, err = conn.Write(frame.ClientUsernamePasswdRequest(s.version, s.username, s.password)); err != nil {
+	if _, err = conn.Write(frame.ClientUsernamePasswdRequest(s.Version, s.Username, s.Password)); err != nil {
 		return fmt.Errorf("<auth write err> %w ", err)
 	}
 
@@ -381,7 +383,7 @@ func (s *S5Protocol) Connect(conn io.ReadWriteCloser, proxyAddr, dstAddr string)
 	// +-----+---------+-----+--------------+----------+----------+
 	// |   1 |       1 |   1 |            1 | 1-255    |        2 |
 	// +-----+---------+-----+--------------+----------+----------+
-	if _, err = conn.Write(frame.ClientCommandRequest(s.version, CmdConnect, byte(0), ip, port)); err != nil {
+	if _, err = conn.Write(frame.ClientCommandRequest(s.Version, CmdConnect, byte(0), ip, port)); err != nil {
 		return
 	}
 
