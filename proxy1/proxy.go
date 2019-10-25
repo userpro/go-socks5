@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"socks5"
 
 	"net/http"
@@ -16,11 +17,15 @@ import (
 */
 
 const (
-	httpServer  = ":9000"
-	proxyServer = "127.0.0.1:8080"
+	httpServer      = ":9000"
+	proxyServer     = "127.0.0.1:8080"
+	serverPprofPort = "10001"
+	clientPprofPort = "10002"
 )
 
 var (
+	isServer = flag.Bool("server", false, "true: server, false: client")
+
 	// proxyRouter => {localAddr : targetAddr}
 	// localAddr 代理流量入口地址
 	// targetAddr 代理流量出口地址 由代理服务器来发起连接
@@ -64,8 +69,16 @@ func server() {
 }
 
 func main() {
-	go server()
-	time.Sleep(time.Second * 2)
-	go client()
-	log.Fatal(http.ListenAndServe(":9999", nil)) // pprof
+	flag.Parse()
+	var pprofPort string
+	if *isServer {
+		go server()
+		pprofPort = serverPprofPort
+		// TODO: HTTP API 动态修改路由
+		// log.Fatal(http.ListenAndServe(httpServer, nil))
+	} else {
+		go client()
+		pprofPort = clientPprofPort
+	}
+	log.Fatal(http.ListenAndServe("0.0.0.0:"+pprofPort, nil)) // pprof
 }

@@ -104,12 +104,12 @@ func main() {
 	if *isServer {
 		go server()
 		pprofPort = serverPprofPort
-		// TODO: HTTP API 动态修改路由
-		// log.Fatal(http.ListenAndServe(httpServer, nil))
 	} else {
 		go client()
 		pprofPort = clientPprofPort
 	}
+	// TODO: HTTP API 动态修改路由
+	// log.Fatal(http.ListenAndServe(httpServer, nil))
 	log.Fatal(http.ListenAndServe("0.0.0.0:"+pprofPort, nil)) // pprof
 }
 
