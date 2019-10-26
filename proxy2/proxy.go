@@ -174,8 +174,8 @@ func muxClient(conn io.ReadWriteCloser, die <-chan struct{}) {
 				go func() {
 					if die != nil {
 						<-die
+						serv.Close()
 					}
-					serv.Close()
 				}()
 
 				for {
