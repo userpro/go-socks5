@@ -432,7 +432,7 @@ func ProxyStream(p1 io.ReadWriteCloser, p2 net.Conn) {
 		go func() {
 			buff := s5Buf.Get().([]byte)
 			if _, err := io.CopyBuffer(dst, src, buff); err != nil {
-				log.Error("[streamCopy] err: ", err)
+				log.Warn("[streamCopy] err: ", err)
 			}
 			s5Buf.Put(buff)
 			close(die)

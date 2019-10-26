@@ -1,0 +1,46 @@
+{
+    "http_server": ":9000",
+    "proxy_mode": 1,
+    "proxy_server": "127.0.0.1:8080",
+    "server_pprof_server": "0.0.0.0:10001",
+    "client_pprof_server": "0.0.0.0:10002",
+    "proxy_router": [
+        {
+            "in": ":8888",
+            "out": ":8090"
+        },
+        {
+            "in": ":10101",
+            "out": ":9900"
+        }
+    ],
+    "socks5": {
+        "verison": 5,
+        "username": "hi",
+        "password": "zerpro"
+    },
+    "kcp": {
+        "key": "wdnmd",
+        "salt": "hahahahahahaha",
+        "crypt": "aesss",
+        "mode": "fast3",
+        "mtu": 1400,
+        "sndwnd": 128,
+        "rcvwnd": 1024,
+        "datashard": 10,
+        "parityshard": 3,
+        "dscp": 46,
+        "acknodelay": false,
+        "nodelay": 1,
+        "interval": 40,
+        "resend": 2,
+        "sockbuf": 16777217
+    },
+    "smux": {
+        "version": 2,
+        "keep_alive_interval": 12,
+        "keep_alive_timeout": 12,
+        "max_frame_size": 10240,
+        "max_stream_buffer": 123
+    }
+}

@@ -50,7 +50,7 @@ func NewServerConnWithOpts(conn protocol.ServerConn, opts *ServerOpts) *Server {
 
 func (s *Server) setOpts(opts *ServerOpts) *Server {
 	if opts != nil {
-		if opts.Username != "" {
+		if opts.Username != "" && !byteContain(s.s5.AuthMethodSupport, AuthUsernamePasswd) {
 			s.s5.AuthMethodSupport = append(s.s5.AuthMethodSupport, AuthUsernamePasswd)
 		}
 		s.s5.Username = opts.Username

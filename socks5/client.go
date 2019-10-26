@@ -53,7 +53,7 @@ func NewClientConnWithOpts(conn protocol.ClientConn, opts *ClientOpts) *Client {
 
 func (c *Client) setOpts(opts *ClientOpts) *Client {
 	if opts != nil {
-		if opts.Username != "" {
+		if opts.Username != "" && !byteContain(c.s5.AuthMethodSupport, AuthUsernamePasswd) {
 			c.s5.AuthMethodSupport = append(c.s5.AuthMethodSupport, AuthUsernamePasswd)
 		}
 		c.s5.AuthMethodSupport = append(c.s5.AuthMethodSupport, opts.Methods...)

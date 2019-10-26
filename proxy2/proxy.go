@@ -3,114 +3,120 @@ package main
 import (
 	"socks5"
 	"socks5/protocol"
-	"sync"
-	"time"
 
 	"flag"
 	"io"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
+	"sync"
+	"time"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 	mux "github.com/xtaci/smux/v2"
 )
 
 /*
+多条TCP链接分享同一个远程端口
+proxyMode=0:
 	1. [内网]client -> proxy -> [公网]target
 	2. [公网]target -> proxy -> [内网]client
 	3. Done.
-	多条TCP链接分享同一个远程端口
+
+proxyMode=1:
+	1. [内网]client -> proxy -> [公网]target
+	2. Done.
+
 */
 
-/*
-{
-	"actor": "server"|"client", //指定角色
-	"http_server": ":9000",
-	"proxy_server": "127.0.0.1:8080",
-	"server_pprof_port": "10001",
-	"client_pprof_port": "10002",
-	"proxy_router": [
-		{ "in": ":8888", "out": ":8090" }
-		{ "in": ":10101", "out": ":9900" }
-	],
-	"socks5": {
-		"verison": 5,
-		"username": "hi",
-		"password": "zerpro",
-	},
-	"kcp": {
-		"key": "wdnmd",
-		"salt": "hahahahahahaha",
-		"crypt": "aes-128",
-		"mode": "fast3",
-		"mtu": 1400,
-		"sndwnd": 128,
-		"rcvwnd": 1024,
-		"datashard": 10,
-		"parityshard": 3,
-		"dscp": 46,
-		"acknodelay": false,
-		"nodelay": 1,
-		"interval": 40,
-		"resend": 2,
-		"sockbuf": 16777217,
-	},
-	"smux": {
-		"version": 2,
-		"keep_alive_interval": time.Duration,
-		"keep_alive_timeout": time.Duration,
-		"max_frame_size": 10240,
-		"max_receive_buffer": 123,
-		"max_stream_buffer": 123,
-	}
+type route struct {
+	In  string
+	Out string
 }
-*/
 
 const (
-	httpServer      = ":9000"
-	proxyServer     = "127.0.0.1:8080"
-	serverPprofPort = "10001"
-	clientPprofPort = "10002"
+	configServerFileName = "server" // 配置文件名 不带扩展名
+	configClientFileName = "client" // 配置文件名 不带扩展名
 )
 
 var (
-	isServer = flag.Bool("server", false, "true: server, false: client")
+	isServer   = flag.Bool("server", false, "true->server, (default) false->client")
+	configPath = flag.String("config", ".", "config file path, default in current path")
 
-	// ProxyRouter => {localAddr : targetAddr}
-	// localAddr 代理流量入口地址
-	// targetAddr 代理流量出口地址 由代理服务器来发起连接
-	ProxyRouter = map[string]string{
-		":8888":  ":8090",
-		":10101": ":9900",
-	}
-
-	s5 = socks5.S5Protocol{
-		Version:           5,
-		Username:          "hi",
-		Password:          "zerpro",
-		AuthMethodSupport: []byte{socks5.AuthNoAuthRequired},
-		DirectMode:        true,
-		ConnConfig: &protocol.KcpConfig{
-			Key:  "wdnmd",
-			Salt: "hahahahahahah",
-		},
-	}
+	s5                *socks5.S5Protocol
+	proxyRouter       []route
+	httpServer        string
+	proxyMode         int
+	proxyServer       string
+	serverPprofServer string
+	clientPprofServer string
 )
+
+func baseConfig() {
+	s5 = socks5Config()
+	proxyRouter = routeConfig()
+
+	if viper.IsSet("http_server") {
+		httpServer = viper.GetString("http_server")
+	}
+	if viper.IsSet("proxy_mode") {
+		proxyMode = viper.GetInt("proxy_mode")
+	}
+	if viper.IsSet("proxy_server") {
+		proxyServer = viper.GetString("proxy_server")
+	}
+	if viper.IsSet("server_pprof_server") {
+		serverPprofServer = viper.GetString("server_pprof_server")
+	}
+	if viper.IsSet("client_pprof_server") {
+		clientPprofServer = viper.GetString("client_pprof_server")
+	}
+}
+
+func logConfig() {
+	log.Info("================================")
+	log.Info("isServer       : ", isServer)
+	log.Info("httpServer     : ", httpServer)
+	log.Info("proxyServer    : ", proxyServer)
+	log.Info("serverPprofServer: ", serverPprofServer)
+	log.Info("clientPprofServer: ", clientPprofServer)
+	log.Info("socks5         : ", s5)
+	log.Info("proxy router   : ", proxyRouter)
+	log.Info("================================")
+}
 
 func main() {
 	flag.Parse()
-	var pprofPort string
+	var configFileName string
+	if *isServer {
+		configFileName = configServerFileName
+	} else {
+		configFileName = configClientFileName
+	}
+	viper.SetConfigName(configFileName)
+	viper.AddConfigPath(*configPath)
+	viper.SetConfigType("json")
+
+	err := viper.ReadInConfig()
+	if err != nil {
+		log.Fatal("config file err: ", err)
+	}
+
+	baseConfig()
+	logConfig()
+
+	var pprofServer string
 	if *isServer {
 		go server()
-		pprofPort = serverPprofPort
+		pprofServer = serverPprofServer
 	} else {
 		go client()
-		pprofPort = clientPprofPort
+		pprofServer = clientPprofServer
 	}
 	// TODO: HTTP API 动态修改路由
 	// log.Fatal(http.ListenAndServe(httpServer, nil))
-	log.Fatal(http.ListenAndServe("0.0.0.0:"+pprofPort, nil)) // pprof
+	log.Fatal(http.ListenAndServe(pprofServer, nil)) // pprof
 }
 
 func muxClient(conn io.ReadWriteCloser, die <-chan struct{}) {
@@ -149,13 +155,15 @@ func muxClient(conn io.ReadWriteCloser, die <-chan struct{}) {
 			return
 		}
 
-		// 发送真实流量
+		// 桥接流量
 		socks5.ProxyStream(dst, stream)
 	}
 
-	var wg sync.WaitGroup
 	// 在公网机器上开启本地端口转发
-	for localAddr, remoteAddr := range ProxyRouter {
+	var wg sync.WaitGroup
+	for _, route := range proxyRouter {
+		localAddr := route.In
+		remoteAddr := route.Out
 		wg.Add(1)
 		go func(localAddr, remoteAddr string) {
 			defer wg.Done()
@@ -164,7 +172,9 @@ func muxClient(conn io.ReadWriteCloser, die <-chan struct{}) {
 				defer serv.Close()
 				log.Info("[muxClient] listen at ", localAddr)
 				go func() {
-					<-die
+					if die != nil {
+						<-die
+					}
 					serv.Close()
 				}()
 
@@ -193,8 +203,7 @@ func muxServer(conn io.ReadWriteCloser) {
 		log.Error("[muxServer] ping err: ", err)
 		return
 	}
-	smuxConfig := mux.DefaultConfig() // TODO: 增加smux的配置
-	muxer, err := mux.Server(conn, smuxConfig)
+	muxer, err := mux.Server(conn, smuxConfig())
 	if err != nil {
 		log.Error("[muxServer] Server ", err)
 		return
@@ -220,7 +229,13 @@ func muxServer(conn io.ReadWriteCloser) {
 }
 
 func server() {
-	die := make(chan struct{})
+	log.Info("proxy server start")
+	defer log.Info("proxy server quit")
+
+	var die chan struct{}
+	if proxyMode == 0 {
+		die = make(chan struct{})
+	}
 	lis := protocol.New(&protocol.KcpConfig{})
 	if err := lis.Listen(proxyServer); err == nil {
 		defer lis.Close()
@@ -233,18 +248,22 @@ func server() {
 			conn.SetReadTimeout(0)
 			conn.SetWriteTimeout(0)
 
-			// 清理原有client
-			close(die)
-			// 等待清理完成
-			time.Sleep(time.Second)
-
-			die = make(chan struct{})
-			go muxClient(conn, die)
+			if proxyMode == 0 {
+				close(die)              // 反方向代理时, <[内网]服务器>重启时会重新连接上<[公网]服务器>, <[公网]服务器>需要关闭上一条连接里开启的本地端口监听
+				time.Sleep(time.Second) // 等待清理完成
+				die = make(chan struct{})
+				go muxClient(conn, die)
+			} else if proxyMode == 1 {
+				go muxServer(conn)
+			}
 		}
 	}
 }
 
 func client() {
+	log.Info("proxy client start")
+	defer log.Info("proxy client quit")
+
 	conn := protocol.New()
 	err := conn.Dial(proxyServer)
 	if err != nil {
@@ -254,5 +273,149 @@ func client() {
 	defer conn.Close()
 	conn.SetReadTimeout(0)
 	conn.SetWriteTimeout(0)
-	muxServer(conn)
+	if proxyMode == 0 {
+		muxServer(conn)
+	} else if proxyMode == 1 {
+		muxClient(conn, nil)
+	}
+}
+
+func routeConfig() (r []route) {
+	if !viper.IsSet("proxy_router") {
+		return
+	}
+	sub := viper.Get("proxy_router")
+	a, ok := sub.([]interface{})
+	if !ok {
+		log.Error("config proxy router err, should be []interface{}")
+	}
+
+	// 解析 proxy_router 项
+	for _, val := range a {
+		v, ok := val.(map[string]interface{})
+		if !ok {
+			log.Error("config proxy router err, should be {string: string}")
+		}
+		var rt route
+		in, ok := v["in"]
+		if !ok {
+			log.Fatal("config proxy router err, must have key 'in'")
+		}
+		inStr, ok := in.(string)
+		if !ok {
+			log.Fatal("config proxy router err, key 'in' must have string value")
+		}
+		rt.In = inStr
+
+		out, ok := v["out"]
+		if !ok {
+			log.Fatal("config proxy router err, must have key 'out'")
+		}
+		outStr, ok := out.(string)
+		if !ok {
+			log.Fatal("config proxy router err, key 'out' must have string value")
+		}
+		rt.Out = outStr
+
+		r = append(r, rt)
+	}
+	return
+}
+
+func socks5Config() (s5 *socks5.S5Protocol) {
+	s5 = &socks5.S5Protocol{
+		Version:           5,
+		AuthMethodSupport: []byte{socks5.AuthNoAuthRequired},
+		DirectMode:        true,
+		ConnConfig:        kcpConfig(),
+	}
+	if !viper.IsSet("socks5") {
+		return
+	}
+	// 此项不起作用
+	if viper.IsSet("socks5.version") {
+		s5.Version = byte(viper.GetInt("socks5.version"))
+	}
+	if viper.IsSet("socks5.username") {
+		s5.Username = viper.GetString("socks5.username")
+		s5.AuthMethodSupport = append(s5.AuthMethodSupport, socks5.AuthUsernamePasswd)
+	}
+	if viper.IsSet("socks5.password") {
+		s5.Password = viper.GetString("socks5.password")
+	}
+	return
+}
+
+func kcpConfig() (config *protocol.KcpConfig) {
+	if !viper.IsSet("kcp") {
+		return
+	}
+	config = &protocol.KcpConfig{}
+	if viper.IsSet("kcp.key") {
+		config.Key = viper.GetString("kcp.key")
+	}
+	if viper.IsSet("kcp.salt") {
+		config.Salt = viper.GetString("kcp.salt")
+	}
+	if viper.IsSet("kcp.crypt") {
+		config.Crypt = viper.GetString("kcp.crypt")
+	}
+	if viper.IsSet("kcp.mode") {
+		config.Mode = viper.GetString("kcp.mode")
+	}
+	if viper.IsSet("kcp.mtu") {
+		config.MTU = viper.GetInt("kcp.mtu")
+	}
+	if viper.IsSet("kcp.sndwnd") {
+		config.SndWnd = viper.GetInt("kcp.sndwnd")
+	}
+	if viper.IsSet("kcp.rcvwnd") {
+		config.RcvWnd = viper.GetInt("kcp.rcvwnd")
+	}
+	if viper.IsSet("kcp.datashard") {
+		config.DataShard = viper.GetInt("kcp.datashard")
+	}
+	if viper.IsSet("kcp.parityshard") {
+		config.ParityShard = viper.GetInt("kcp.parityshard")
+	}
+	if viper.IsSet("kcp.dscp") {
+		config.DSCP = viper.GetInt("kcp.dscp")
+	}
+	if viper.IsSet("kcp.acknodelay") {
+		config.AckNodelay = viper.GetBool("kcp.acknodelay")
+	}
+	if viper.IsSet("kcp.interval") {
+		config.Interval = viper.GetInt("kcp.interval")
+	}
+	if viper.IsSet("kcp.resend") {
+		config.Resend = viper.GetInt("kcp.resend")
+	}
+	if viper.IsSet("kcp.sockbuf") {
+		config.SockBuf = viper.GetInt("kcp.sockbuf")
+	}
+
+	return
+}
+
+func smuxConfig() (config *mux.Config) {
+	config = mux.DefaultConfig() // TODO: 增加smux的配置
+	if !viper.IsSet("smux") {
+		return
+	}
+	if viper.IsSet("smux.keep_alive_interval") {
+		config.KeepAliveInterval = viper.GetDuration("smux.keep_alive_interval") * time.Second
+	}
+	if viper.IsSet("smux.keep_alive_timeout") {
+		config.KeepAliveTimeout = viper.GetDuration("smux.keep_alive_timeout") * time.Second
+	}
+	if viper.IsSet("smux.max_frame_size") {
+		config.MaxFrameSize = viper.GetInt("smux.max_frame_size")
+	}
+	if viper.IsSet("smux.max_receive_buffer") {
+		config.MaxFrameSize = viper.GetInt("smux.max_receive_buffer")
+	}
+	if viper.IsSet("smux.max_stream_buffer") {
+		config.MaxStreamBuffer = viper.GetInt("smux.max_stream_buffer")
+	}
+	return
 }

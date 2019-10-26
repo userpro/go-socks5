@@ -50,6 +50,7 @@ func defaultConfig() (config *KcpConfig) {
 	return &KcpConfig{
 		Key:         "creeper",
 		Salt:        "awman",
+		Crypt:       "aes",
 		Mode:        "fast3",
 		MTU:         1400,
 		SndWnd:      128,

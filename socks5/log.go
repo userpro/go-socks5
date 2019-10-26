@@ -27,3 +27,7 @@ func (l *_log) Errorf(f string, args ...interface{}) {
 func (l *_log) Fatal(args ...interface{}) {
 	logrus.Fatal(args)
 }
+
+func (l *_log) Warn(args ...interface{}) {
+	logrus.Warn(args)
+}

@@ -7,6 +7,15 @@ import (
 	"strings"
 )
 
+func byteContain(s1 []byte, s2 byte) bool {
+	for _, v := range s1 {
+		if s2 == v {
+			return true
+		}
+	}
+	return false
+}
+
 // StrToByteIPv4 字符串转IPv4
 func StrToByteIPv4(ipv4 string) []byte {
 	var tmp int64
