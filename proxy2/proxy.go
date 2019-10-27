@@ -27,7 +27,6 @@ proxyMode=0:
 proxyMode=1:
 	1. [内网]client -> proxy -> [公网]target
 	2. Done.
-
 */
 
 type route struct {
@@ -76,14 +75,164 @@ func baseConfig() {
 
 func logConfig() {
 	log.Info("================================")
-	log.Info("isServer       : ", isServer)
+	log.Info("isServer       : ", *isServer)
 	log.Info("httpServer     : ", httpServer)
+	log.Info("proxyMode      : ", proxyMode)
 	log.Info("proxyServer    : ", proxyServer)
 	log.Info("serverPprofServer: ", serverPprofServer)
 	log.Info("clientPprofServer: ", clientPprofServer)
 	log.Info("socks5         : ", s5)
+	log.Info("kcp            : ", s5.ConnConfig)
 	log.Info("proxy router   : ", proxyRouter)
 	log.Info("================================")
+}
+
+func routeConfig() (r []route) {
+	if !viper.IsSet("proxy_router") {
+		return
+	}
+	sub := viper.Get("proxy_router")
+	a, ok := sub.([]interface{})
+	if !ok {
+		log.Error("config proxy router err, should be []interface{}")
+	}
+
+	// 解析 proxy_router 项
+	for _, val := range a {
+		v, ok := val.(map[string]interface{})
+		if !ok {
+			log.Error("config proxy router err, should be {string: string}")
+		}
+		var rt route
+		in, ok := v["in"]
+		if !ok {
+			log.Fatal("config proxy router err, must have key 'in'")
+		}
+		inStr, ok := in.(string)
+		if !ok {
+			log.Fatal("config proxy router err, key 'in' must have string value")
+		}
+		rt.In = inStr
+
+		out, ok := v["out"]
+		if !ok {
+			log.Fatal("config proxy router err, must have key 'out'")
+		}
+		outStr, ok := out.(string)
+		if !ok {
+			log.Fatal("config proxy router err, key 'out' must have string value")
+		}
+		rt.Out = outStr
+
+		r = append(r, rt)
+	}
+	return
+}
+
+func socks5Config() (s5 *socks5.S5Protocol) {
+	s5 = &socks5.S5Protocol{
+		Version:           5,
+		AuthMethodSupport: []byte{socks5.AuthNoAuthRequired},
+		DirectMode:        true,
+		ConnConfig:        kcpConfig(),
+	}
+	if !viper.IsSet("socks5") {
+		return
+	}
+	// 此项不起作用
+	if viper.IsSet("socks5.version") {
+		s5.Version = byte(viper.GetInt("socks5.version"))
+	}
+	if viper.IsSet("socks5.username") {
+		s5.Username = viper.GetString("socks5.username")
+		s5.AuthMethodSupport = append(s5.AuthMethodSupport, socks5.AuthUsernamePasswd)
+	}
+	if viper.IsSet("socks5.password") {
+		s5.Password = viper.GetString("socks5.password")
+	}
+	return
+}
+
+func kcpConfig() (config *protocol.KcpConfig) {
+	if !viper.IsSet("kcp") {
+		return
+	}
+	config = &protocol.KcpConfig{}
+	if viper.IsSet("kcp.key") {
+		config.Key = viper.GetString("kcp.key")
+	}
+	if viper.IsSet("kcp.salt") {
+		config.Salt = viper.GetString("kcp.salt")
+	}
+	if viper.IsSet("kcp.crypt") {
+		config.Crypt = viper.GetString("kcp.crypt")
+	}
+	if viper.IsSet("kcp.mode") {
+		config.Mode = viper.GetString("kcp.mode")
+	}
+	if viper.IsSet("kcp.mtu") {
+		config.MTU = viper.GetInt("kcp.mtu")
+	}
+	if viper.IsSet("kcp.sndwnd") {
+		config.SndWnd = viper.GetInt("kcp.sndwnd")
+	}
+	if viper.IsSet("kcp.rcvwnd") {
+		config.RcvWnd = viper.GetInt("kcp.rcvwnd")
+	}
+	if viper.IsSet("kcp.datashard") {
+		config.DataShard = viper.GetInt("kcp.datashard")
+	}
+	if viper.IsSet("kcp.parityshard") {
+		config.ParityShard = viper.GetInt("kcp.parityshard")
+	}
+	if viper.IsSet("kcp.dscp") {
+		config.DSCP = viper.GetInt("kcp.dscp")
+	}
+	if viper.IsSet("kcp.acknodelay") {
+		config.AckNodelay = viper.GetBool("kcp.acknodelay")
+	}
+	if viper.IsSet("kcp.interval") {
+		config.Interval = viper.GetInt("kcp.interval")
+	}
+	if viper.IsSet("kcp.resend") {
+		config.Resend = viper.GetInt("kcp.resend")
+	}
+	if viper.IsSet("kcp.nc") {
+		config.NoCongestion = viper.GetInt("kcp.nc")
+	}
+	if viper.IsSet("kcp.sockbuf") {
+		config.SockBuf = viper.GetInt("kcp.sockbuf")
+	}
+	if viper.IsSet("kcp.ping_interval") {
+		config.PingInterval = viper.GetDuration("kcp.ping_interval") * time.Second
+	}
+	if viper.IsSet("kcp.pong_timeout") {
+		config.PongTimeout = viper.GetDuration("kcp.pong_timeout") * time.Second
+	}
+	return
+}
+
+func smuxConfig() (config *mux.Config) {
+	config = mux.DefaultConfig()
+	if !viper.IsSet("smux") {
+		return
+	}
+	if viper.IsSet("smux.keep_alive_interval") {
+		config.KeepAliveInterval = viper.GetDuration("smux.keep_alive_interval") * time.Second
+	}
+	if viper.IsSet("smux.keep_alive_timeout") {
+		config.KeepAliveTimeout = viper.GetDuration("smux.keep_alive_timeout") * time.Second
+	}
+	if viper.IsSet("smux.max_frame_size") {
+		config.MaxFrameSize = viper.GetInt("smux.max_frame_size")
+	}
+	if viper.IsSet("smux.max_receive_buffer") {
+		config.MaxFrameSize = viper.GetInt("smux.max_receive_buffer")
+	}
+	if viper.IsSet("smux.max_stream_buffer") {
+		config.MaxStreamBuffer = viper.GetInt("smux.max_stream_buffer")
+	}
+	return
 }
 
 func main() {
@@ -236,7 +385,7 @@ func server() {
 	if proxyMode == 0 {
 		die = make(chan struct{})
 	}
-	lis := protocol.New(&protocol.KcpConfig{})
+	lis := protocol.New(s5.ConnConfig)
 	if err := lis.Listen(proxyServer); err == nil {
 		defer lis.Close()
 		for {
@@ -264,7 +413,7 @@ func client() {
 	log.Info("proxy client start")
 	defer log.Info("proxy client quit")
 
-	conn := protocol.New()
+	conn := protocol.New(s5.ConnConfig)
 	err := conn.Dial(proxyServer)
 	if err != nil {
 		log.Error("[client] Dial err: ", err)
@@ -278,144 +427,4 @@ func client() {
 	} else if proxyMode == 1 {
 		muxClient(conn, nil)
 	}
-}
-
-func routeConfig() (r []route) {
-	if !viper.IsSet("proxy_router") {
-		return
-	}
-	sub := viper.Get("proxy_router")
-	a, ok := sub.([]interface{})
-	if !ok {
-		log.Error("config proxy router err, should be []interface{}")
-	}
-
-	// 解析 proxy_router 项
-	for _, val := range a {
-		v, ok := val.(map[string]interface{})
-		if !ok {
-			log.Error("config proxy router err, should be {string: string}")
-		}
-		var rt route
-		in, ok := v["in"]
-		if !ok {
-			log.Fatal("config proxy router err, must have key 'in'")
-		}
-		inStr, ok := in.(string)
-		if !ok {
-			log.Fatal("config proxy router err, key 'in' must have string value")
-		}
-		rt.In = inStr
-
-		out, ok := v["out"]
-		if !ok {
-			log.Fatal("config proxy router err, must have key 'out'")
-		}
-		outStr, ok := out.(string)
-		if !ok {
-			log.Fatal("config proxy router err, key 'out' must have string value")
-		}
-		rt.Out = outStr
-
-		r = append(r, rt)
-	}
-	return
-}
-
-func socks5Config() (s5 *socks5.S5Protocol) {
-	s5 = &socks5.S5Protocol{
-		Version:           5,
-		AuthMethodSupport: []byte{socks5.AuthNoAuthRequired},
-		DirectMode:        true,
-		ConnConfig:        kcpConfig(),
-	}
-	if !viper.IsSet("socks5") {
-		return
-	}
-	// 此项不起作用
-	if viper.IsSet("socks5.version") {
-		s5.Version = byte(viper.GetInt("socks5.version"))
-	}
-	if viper.IsSet("socks5.username") {
-		s5.Username = viper.GetString("socks5.username")
-		s5.AuthMethodSupport = append(s5.AuthMethodSupport, socks5.AuthUsernamePasswd)
-	}
-	if viper.IsSet("socks5.password") {
-		s5.Password = viper.GetString("socks5.password")
-	}
-	return
-}
-
-func kcpConfig() (config *protocol.KcpConfig) {
-	if !viper.IsSet("kcp") {
-		return
-	}
-	config = &protocol.KcpConfig{}
-	if viper.IsSet("kcp.key") {
-		config.Key = viper.GetString("kcp.key")
-	}
-	if viper.IsSet("kcp.salt") {
-		config.Salt = viper.GetString("kcp.salt")
-	}
-	if viper.IsSet("kcp.crypt") {
-		config.Crypt = viper.GetString("kcp.crypt")
-	}
-	if viper.IsSet("kcp.mode") {
-		config.Mode = viper.GetString("kcp.mode")
-	}
-	if viper.IsSet("kcp.mtu") {
-		config.MTU = viper.GetInt("kcp.mtu")
-	}
-	if viper.IsSet("kcp.sndwnd") {
-		config.SndWnd = viper.GetInt("kcp.sndwnd")
-	}
-	if viper.IsSet("kcp.rcvwnd") {
-		config.RcvWnd = viper.GetInt("kcp.rcvwnd")
-	}
-	if viper.IsSet("kcp.datashard") {
-		config.DataShard = viper.GetInt("kcp.datashard")
-	}
-	if viper.IsSet("kcp.parityshard") {
-		config.ParityShard = viper.GetInt("kcp.parityshard")
-	}
-	if viper.IsSet("kcp.dscp") {
-		config.DSCP = viper.GetInt("kcp.dscp")
-	}
-	if viper.IsSet("kcp.acknodelay") {
-		config.AckNodelay = viper.GetBool("kcp.acknodelay")
-	}
-	if viper.IsSet("kcp.interval") {
-		config.Interval = viper.GetInt("kcp.interval")
-	}
-	if viper.IsSet("kcp.resend") {
-		config.Resend = viper.GetInt("kcp.resend")
-	}
-	if viper.IsSet("kcp.sockbuf") {
-		config.SockBuf = viper.GetInt("kcp.sockbuf")
-	}
-
-	return
-}
-
-func smuxConfig() (config *mux.Config) {
-	config = mux.DefaultConfig() // TODO: 增加smux的配置
-	if !viper.IsSet("smux") {
-		return
-	}
-	if viper.IsSet("smux.keep_alive_interval") {
-		config.KeepAliveInterval = viper.GetDuration("smux.keep_alive_interval") * time.Second
-	}
-	if viper.IsSet("smux.keep_alive_timeout") {
-		config.KeepAliveTimeout = viper.GetDuration("smux.keep_alive_timeout") * time.Second
-	}
-	if viper.IsSet("smux.max_frame_size") {
-		config.MaxFrameSize = viper.GetInt("smux.max_frame_size")
-	}
-	if viper.IsSet("smux.max_receive_buffer") {
-		config.MaxFrameSize = viper.GetInt("smux.max_receive_buffer")
-	}
-	if viper.IsSet("smux.max_stream_buffer") {
-		config.MaxStreamBuffer = viper.GetInt("smux.max_stream_buffer")
-	}
-	return
 }

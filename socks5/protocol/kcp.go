@@ -27,6 +27,7 @@ type KcpConfig struct {
 	DSCP                                    int
 	SockBuf                                 int
 	DataShard, ParityShard                  int
+	PingInterval, PongTimeout               time.Duration
 }
 
 // KcpConn Kcp连接
@@ -48,26 +49,29 @@ type kcpSession struct {
 
 func defaultConfig() (config *KcpConfig) {
 	return &KcpConfig{
-		Key:         "creeper",
-		Salt:        "awman",
-		Crypt:       "aes",
-		Mode:        "fast3",
-		MTU:         1400,
-		SndWnd:      128,
-		RcvWnd:      1024,
-		DataShard:   10,
-		ParityShard: 3,
-		DSCP:        46,
-		AckNodelay:  false,
-		NoDelay:     1,
-		Interval:    40,
-		Resend:      2,
-		SockBuf:     10240,
+		Key:          "creeper",
+		Salt:         "awman",
+		Crypt:        "aes",
+		Mode:         "fast3",
+		MTU:          1400,
+		SndWnd:       128,
+		RcvWnd:       1024,
+		DataShard:    10,
+		ParityShard:  3,
+		DSCP:         46,
+		AckNodelay:   false,
+		NoDelay:      1,
+		Interval:     40,
+		NoCongestion: 1,
+		Resend:       2,
+		SockBuf:      204800,
+		PingInterval: time.Second * 3,
+		PongTimeout:  time.Second * 3,
 	}
 }
 
 func combineConfig(c1 *KcpConfig, c2 *KcpConfig) (config *KcpConfig) {
-	config = &KcpConfig{}
+	config = c1
 	if c1.Key == "" {
 		config.Key = c2.Key
 	}
@@ -112,6 +116,12 @@ func combineConfig(c1 *KcpConfig, c2 *KcpConfig) (config *KcpConfig) {
 	}
 	if c1.ParityShard == 0 {
 		config.ParityShard = c2.ParityShard
+	}
+	if c1.PingInterval == 0 {
+		config.PingInterval = c2.PingInterval
+	}
+	if c1.PongTimeout == 0 {
+		config.PongTimeout = c2.PongTimeout
 	}
 	return
 }
@@ -180,8 +190,8 @@ func New(args ...interface{}) Conn {
 		config:       config,
 		readTimeout:  time.Second * 3,
 		writeTimeout: time.Second * 3,
-		pingInterval: time.Second * 3,
-		pongTimeout:  time.Second * 3,
+		pingInterval: config.PingInterval,
+		pongTimeout:  config.PongTimeout,
 	}
 }
 

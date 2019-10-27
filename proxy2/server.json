@@ -20,9 +20,9 @@
         "password": "zerpro"
     },
     "kcp": {
-        "key": "wdnmd",
+        "key": "hizerpro",
         "salt": "hahahahahahaha",
-        "crypt": "aesss",
+        "crypt": "aes",
         "mode": "fast3",
         "mtu": 1400,
         "sndwnd": 128,
@@ -34,13 +34,16 @@
         "nodelay": 1,
         "interval": 40,
         "resend": 2,
-        "sockbuf": 16777217
+        "nc": 1,
+        "sockbuf": 20480,
+        "ping_interval": 5,
+        "pong_timeout": 5
     },
     "smux": {
         "version": 2,
         "keep_alive_interval": 12,
-        "keep_alive_timeout": 12,
-        "max_frame_size": 10240,
-        "max_stream_buffer": 123
+        "keep_alive_timeout": 24,
+        "max_frame_size": 128,
+        "max_stream_buffer": 1024
     }
 }
