@@ -1,24 +1,22 @@
 # go-socks5
 
-目前只支持转发TCP流量
+目前支持代理TCP流量, 流量从本地代理端口转发到远程代理端口.
 
 ### 如何使用
 
-`./proxy1 [Deprecated]`
-
 相关文件:
 
-* 客户端配置文件名为 `./proxy2/client.json`
+* 客户端配置文件名为 `./proxy/client.json` (文件名固定为`client.json`)
 
-* 服务端配置文件名为 `./proxy2/server.json`
+* 服务端配置文件名为 `./proxy/server.json` (文件名固定为`server.json`)
 
-* 入口文件 `proxy2/proxy.go` 
+* 入口文件 `proxy/proxy.go` 
 
 保证两者配置文件关键参数一致, 启动顺序如下:
 
-1. 启动服务端 `go run ./proxy2/proxy.go -server -config .`
+1. 启动服务端 `go run ./proxy/proxy.go -server -config <config file path>`
 
-2. 启动客户端 `go run ./proxy2/proxy.go -config .`
+2. 启动客户端 `go run ./proxy/proxy.go -config <config file path>`
 
 ```json
 {
@@ -74,12 +72,10 @@
 
 ### 参数解释
 
-* http_server: 预留的http api接口
+* http_server: 预留的http api接口(未实现)
 
 * proxy_mode:
 
-> 多条TCP链接分享同一个远程端口
->
 > proxyMode=0:
 >
 > 1. [内网]client -> proxy -> [公网]target

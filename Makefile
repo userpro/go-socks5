@@ -1,8 +1,5 @@
-proxy_naive:
-	go build -o proxy_naive.out ./proxy1/proxy.go ./proxy1/proxy_client.go
-
-proxy:
-	go build -o proxy.out ./proxy2/proxy.go
+build:
+	go build -o proxy.out ./proxy/proxy.go
 
 pprof:
 	go tool pprof pprof http://127.0.0.1:9999/debug/pprof/profile -seconds 30
